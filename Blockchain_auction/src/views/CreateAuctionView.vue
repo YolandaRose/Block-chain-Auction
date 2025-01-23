@@ -1,24 +1,292 @@
 <template>
   <div class="create-auction-container">
-    <h1>发起拍卖</h1>
-    <el-form>
-      <!-- 表单内容待完善 -->
-    </el-form>
+    <div class="form-section">
+      <h2 class="page-title">创建新拍卖</h2>
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        label-width="100px"
+        class="create-form"
+        @submit.prevent="handleSubmit"
+      >
+        <el-form-item label="拍卖标题" prop="name">
+          <el-input v-model="form.name" placeholder="请输入拍卖品名称" />
+        </el-form-item>
+
+        <el-form-item label="拍卖描述" prop="description">
+          <el-input
+            v-model="form.description"
+            type="textarea"
+            :rows="4"
+            placeholder="请详细描述拍卖品"
+          />
+        </el-form-item>
+
+        <el-form-item label="起拍价格" prop="startPrice">
+          <el-input-number
+            v-model="form.startPrice"
+            :precision="3"
+            :step="0.1"
+            :min="0"
+            controls-position="right"
+          >
+            <template #suffix>ETH</template>
+          </el-input-number>
+        </el-form-item>
+
+        <el-form-item label="拍卖时长" prop="duration">
+          <el-select v-model="form.duration" placeholder="请选择拍卖持续时间">
+            <el-option label="1天" :value="24" />
+            <el-option label="3天" :value="72" />
+            <el-option label="7天" :value="168" />
+            <el-option label="14天" :value="336" />
+            <el-option label="30天" :value="720" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="商品分类" prop="category">
+          <el-select v-model="form.category" placeholder="请选择商品分类">
+            <el-option
+              v-for="cat in categories"
+              :key="cat"
+              :label="cat"
+              :value="cat"
+            />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="商品图片" prop="images">
+          <el-upload
+            v-model:file-list="fileList"
+            class="upload-demo"
+            action="/api/upload"
+            :auto-upload="false"
+            :limit="5"
+            list-type="picture-card"
+            :on-change="handleImageChange"
+          >
+            <template #trigger>
+              <el-icon><Plus /></el-icon>
+            </template>
+            <template #tip>
+              <div class="el-upload__tip">
+                支持 jpg/png 文件，最多5张，每张不超过5MB
+              </div>
+            </template>
+          </el-upload>
+        </el-form-item>
+
+        <el-form-item>
+          <el-button
+            type="primary"
+            native-type="submit"
+            :loading="submitting"
+            :disabled="!isWalletConnected"
+          >
+            {{ isWalletConnected ? '创建拍卖' : '请先连接钱包' }}
+          </el-button>
+          <el-button @click="router.back()">取消</el-button>
+        </el-form-item>
+      </el-form>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
+import { Plus } from '@element-plus/icons-vue'
+import { useAuctionStore } from '@/stores/auction'
+import { ElMessage, type FormInstance, type UploadFile } from 'element-plus'
+import type { UploadUserFile } from 'element-plus'
+
+const router = useRouter()
+const store = useAuctionStore()
+const formRef = ref<FormInstance>()
+const submitting = ref(false)
+const fileList = ref<UploadUserFile[]>([])
+
+const categories = ['艺术品', '收藏品', '数字资产', '虚拟物品', '其他']
+
+const form = ref({
+  name: '',
+  description: '',
+  startPrice: 0.1,
+  duration: 168, // 默认7天
+  category: '',
+  images: [] as string[]
+})
+
+const rules = {
+  name: [
+    { required: true, message: '请输入拍卖品名称', trigger: 'blur' },
+    { min: 2, max: 50, message: '长度在 2 到 50 个字符', trigger: 'blur' }
+  ],
+  description: [
+    { required: true, message: '请输入拍卖品描述', trigger: 'blur' },
+    { min: 10, max: 500, message: '长度在 10 到 500 个字符', trigger: 'blur' }
+  ],
+  startPrice: [
+    { required: true, message: '请设置起拍价格', trigger: 'blur' },
+    { type: 'number', min: 0.001, message: '价格必须大于0.001 ETH', trigger: 'blur' }
+  ],
+  duration: [
+    { required: true, message: '请选择拍卖时长', trigger: 'change' }
+  ],
+  category: [
+    { required: true, message: '请选择商品分类', trigger: 'change' }
+  ],
+  images: [
+    { required: true, message: '请上传至少一张商品图片', trigger: 'change' },
+    { type: 'array', min: 1, max: 5, message: '请上传1-5张商品图片', trigger: 'change' }
+  ]
+}
+
+const isWalletConnected = computed(() => !!store.account)
+
+const handleImageChange = (uploadFile: UploadFile) => {
+  // 这里可以添加图片预处理逻辑
+  form.value.images = fileList.value.map(file => file.url || '')
+}
+
+const handleSubmit = async () => {
+  if (!formRef.value) return
+  
+  try {
+    await formRef.value.validate()
+    
+    if (!isWalletConnected.value) {
+      ElMessage.warning('请先连接钱包')
+      return
+    }
+
+    submitting.value = true
+    
+    // 调用合约创建拍卖
+    await store.createAuction({
+      name: form.value.name,
+      description: form.value.description,
+      startPrice: form.value.startPrice,
+      duration: form.value.duration * 3600, // 转换为秒
+      category: form.value.category,
+      images: form.value.images
+    })
+
+    ElMessage.success('拍卖创建成功')
+    router.push('/auctions')
+  } catch (error: any) {
+    ElMessage.error(error.message || '创建拍卖失败')
+  } finally {
+    submitting.value = false
+  }
+}
 </script>
 
 <style scoped>
 .create-auction-container {
-  max-width: 1200px;
-  margin: 80px auto 20px;
-  padding: 0 20px;
+  width: 100%;
+  min-height: 100%;
+  background-color: var(--bg-color);
+  padding: 40px 0;
+  transition: all 0.3s ease;
 }
 
-h1 {
+.form-section {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 40px;
+  background: var(--bg-color-overlay);
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+
+.page-title {
+  font-size: 24px;
+  color: var(--text-primary);
   margin-bottom: 30px;
-  color: #303133;
+  text-align: center;
+}
+
+.create-form {
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+:deep(.el-form-item__label) {
+  color: var(--text-regular);
+}
+
+:deep(.el-input__wrapper),
+:deep(.el-textarea__wrapper) {
+  background-color: var(--bg-color);
+  border-color: var(--border-color);
+  box-shadow: 0 0 0 1px var(--border-color);
+}
+
+:deep(.el-input__wrapper:hover),
+:deep(.el-textarea__wrapper:hover) {
+  box-shadow: 0 0 0 1px var(--primary-color);
+}
+
+:deep(.el-input__inner),
+:deep(.el-textarea__inner) {
+  color: var(--text-primary);
+  background-color: transparent;
+}
+
+:deep(.el-select__wrapper) {
+  background-color: var(--bg-color);
+}
+
+:deep(.el-select-dropdown__item) {
+  color: var(--text-regular);
+}
+
+:deep(.el-select-dropdown__item.hover),
+:deep(.el-select-dropdown__item:hover) {
+  background-color: var(--primary-color);
+  color: #fff;
+}
+
+.el-upload__tip {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+:deep(.el-upload--picture-card) {
+  width: 120px;
+  height: 120px;
+  line-height: 120px;
+  background-color: var(--bg-color);
+  border-color: var(--border-color);
+}
+
+:deep(.el-upload--picture-card:hover) {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+:deep(.el-upload-list__item) {
+  background-color: var(--bg-color);
+  border-color: var(--border-color);
+}
+
+@media (max-width: 768px) {
+  .create-auction-container {
+    padding: 20px 0;
+  }
+
+  .form-section {
+    padding: 20px;
+    margin: 0 16px;
+  }
+
+  .page-title {
+    font-size: 20px;
+    margin-bottom: 20px;
+  }
 }
 </style> 

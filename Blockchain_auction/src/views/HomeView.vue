@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Lock, Connection, Promotion, ArrowRight } from '@element-plus/icons-vue'
+import { Lock, Connection, Promotion, ArrowRight, Picture } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { useAuctionStore } from '@/stores/auction'
 import { ElMessage } from 'element-plus'
@@ -12,15 +12,29 @@ interface Auction {
   currentPrice: string
   endTime: number
   image: string
+  status: string
+  description: string
 }
 
 const router = useRouter()
 const store = useAuctionStore()
 const loading = ref(false)
 const latestAuctions = ref<Auction[]>([])
+const totalAuctions = ref('1,234')
+const totalUsers = ref('5,678')
+const totalVolume = ref('9,012')
 
 const formatTime = (timestamp: number): string => {
   return dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss')
+}
+
+const getStatusText = (status: string) => {
+  const statusMap: Record<string, string> = {
+    active: '进行中',
+    ended: '已结束',
+    pending: '即将开始'
+  }
+  return statusMap[status] || status
 }
 
 onMounted(async () => {
@@ -58,307 +72,420 @@ const features = [
 </script>
 
 <template>
-  <div class="home">
-    <div class="banner-wrapper">
-      <div class="banner">
-        <h1>探索区块链拍卖的新世界</h1>
-        <p>基于以太坊智能合约的去中心化拍卖平台，安全、透明、高效</p>
-        <div class="banner-buttons">
-          <el-button type="primary" size="large" @click="router.push('/auctions')">
-            浏览拍卖
+  <div class="home-container">
+    <section class="hero-section">
+      <div class="hero-content">
+        <h1 class="hero-title">区块链拍卖的未来</h1>
+        <p class="hero-description">
+          在以太坊智能合约驱动的去中心化平台上，安全透明地参与全球艺术品和数字资产的拍卖交易
+        </p>
+        <div class="hero-actions">
+          <el-button 
+            type="primary" 
+            size="large" 
+            class="action-button"
+            @click="$router.push('/auctions')"
+          >
+            开始探索
           </el-button>
-          <el-button size="large" @click="router.push('/create')">
-            发起拍卖
+          <el-button 
+            size="large" 
+            class="action-button secondary"
+            @click="$router.push('/create-auction')"
+          >
+            创建拍卖
           </el-button>
         </div>
       </div>
-    </div>
-
-    <div class="features">
-      <div v-for="(feature, index) in features" 
-           :key="index" 
-           class="feature-card"
-           :style="{ animationDelay: `${index * 0.2}s` }">
-        <el-icon :size="40" :color="feature.color"><component :is="feature.icon" /></el-icon>
-        <h3>{{ feature.title }}</h3>
-        <p>{{ feature.description }}</p>
+      <div class="hero-stats">
+        <div class="stat-item">
+          <div class="stat-value">{{ totalAuctions }}</div>
+          <div class="stat-label">拍卖总数</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">{{ totalUsers }}</div>
+          <div class="stat-label">活跃用户</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">{{ totalVolume }} ETH</div>
+          <div class="stat-label">交易总额</div>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <div class="latest-auctions">
-      <div class="section-header">
-        <h2>最新拍卖</h2>
-        <el-button text @click="router.push('/auctions')">
-          查看全部 <el-icon class="el-icon--right"><ArrowRight /></el-icon>
-        </el-button>
+    <section class="features-section">
+      <div class="container">
+        <h2 class="section-title">为什么选择我们</h2>
+        <div class="features-grid">
+          <div class="feature-card">
+            <el-icon class="feature-icon" :size="40"><Lock /></el-icon>
+            <h3>安全可靠</h3>
+            <p>基于以太坊智能合约，所有交易都在链上进行，安全透明，无法篡改</p>
+          </div>
+          <div class="feature-card">
+            <el-icon class="feature-icon" :size="40"><Connection /></el-icon>
+            <h3>去中心化</h3>
+            <p>完全去中心化的运作模式，没有中间商，直接通过智能合约执行交易</p>
+          </div>
+          <div class="feature-card">
+            <el-icon class="feature-icon" :size="40"><Promotion /></el-icon>
+            <h3>便捷高效</h3>
+            <p>智能合约自动执行，无需人工干预，大大提高交易效率</p>
+          </div>
+        </div>
       </div>
+    </section>
 
-      <el-row v-loading="loading" :gutter="30">
-        <el-col v-for="auction in latestAuctions" 
-                :key="auction.id" 
-                :span="8"
-                :xs="24" 
-                :sm="12" 
-                :md="8">
-          <el-card class="auction-card" shadow="hover">
-            <img :src="auction.image" class="auction-image" />
-            <div class="auction-info">
-              <h3>{{ auction.name }}</h3>
-              <div class="price-info">
-                <span>当前价格</span>
-                <span class="price">{{ auction.currentPrice }} ETH</span>
+    <section class="latest-auctions">
+      <div class="container">
+        <div class="section-header">
+          <h2 class="section-title">最新拍卖</h2>
+          <el-button 
+            type="primary" 
+            text 
+            class="view-all"
+            @click="$router.push('/auctions')"
+          >
+            查看全部
+            <el-icon class="el-icon--right"><ArrowRight /></el-icon>
+          </el-button>
+        </div>
+        <el-row :gutter="24">
+          <el-col 
+            v-for="auction in latestAuctions" 
+            :key="auction.id" 
+            :xs="24" 
+            :sm="12" 
+            :md="8"
+            class="auction-col"
+          >
+            <el-card 
+              class="auction-card" 
+              :body-style="{ padding: '0px' }"
+              @click="$router.push(`/auction/${auction.id}`)"
+            >
+              <el-image
+                :src="auction.image"
+                class="auction-image"
+                fit="cover"
+              >
+                <template #error>
+                  <div class="image-placeholder">
+                    <el-icon :size="24"><Picture /></el-icon>
+                  </div>
+                </template>
+              </el-image>
+              <div class="auction-info">
+                <h3 class="auction-title">{{ auction.name }}</h3>
+                <p class="auction-description">{{ auction.description }}</p>
+                <div class="auction-meta">
+                  <span class="auction-price">{{ auction.currentPrice }} ETH</span>
+                  <span :class="['auction-status', `status-${auction.status}`]">
+                    {{ getStatusText(auction.status) }}
+                  </span>
+                </div>
               </div>
-              <div class="time-info">
-                <span>结束时间</span>
-                <span>{{ formatTime(auction.endTime) }}</span>
-              </div>
-              <el-button type="primary" @click="router.push(`/auction/${auction.id}`)" class="detail-button">
-                查看详情
-              </el-button>
-            </div>
-          </el-card>
-        </el-col>
-      </el-row>
-    </div>
+            </el-card>
+          </el-col>
+        </el-row>
+      </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.home {
-  padding-top: 60px; /* 为固定导航栏留出空间 */
+.home-container {
+  width: 100%;
+  background-color: var(--bg-color);
+  color: var(--text-regular);
 }
 
-/* 新增包装器样式 */
-.banner-wrapper {
-  width: 100%;
-  background: linear-gradient(135deg, #409EFF 0%, #36cfc9 100%);
-  padding: 80px 20px;
-  margin-bottom: 60px;
+.hero-section {
+  background: linear-gradient(135deg, #1a237e 0%, #673ab7 50%, #e91e63 100%);
+  padding: 120px 0 80px;
+  text-align: center;
   position: relative;
   overflow: hidden;
 }
 
-.banner-wrapper::before {
+.hero-section::before,
+.hero-section::after {
   content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="rgba(255,255,255,0.1)" x="0" y="0" width="100" height="100"/></svg>') repeat;
-  opacity: 0.1;
-}
-
-/* 修改 banner 样式 */
-.banner {
-  max-width: 1200px;
-  margin: 0 auto;
-  text-align: center;
-  color: white;
-  position: relative;
+  width: 1000px;
+  height: 1000px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 70%);
   z-index: 1;
 }
 
-.banner h1 {
-  font-size: 3rem;
-  margin-bottom: 20px;
-  font-weight: 600;
+.hero-section::before {
+  top: -500px;
+  left: -200px;
 }
 
-.banner p {
-  font-size: 1.2rem;
-  opacity: 0.9;
-  margin-bottom: 30px;
+.hero-section::after {
+  bottom: -500px;
+  right: -200px;
 }
 
-.banner-buttons {
+.hero-content {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0 24px;
+  position: relative;
+  z-index: 2;
+}
+
+.hero-title {
+  font-size: 4rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 24px;
+  line-height: 1.2;
+  background: linear-gradient(45deg, #fff 30%, rgba(255,255,255,0.8) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-description {
+  font-size: 1.5rem;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 40px;
+  line-height: 1.6;
+}
+
+.hero-actions {
   display: flex;
-  gap: 20px;
+  gap: 16px;
   justify-content: center;
+  margin-bottom: 60px;
 }
 
-.features,
-.latest-auctions {
+.action-button {
+  padding: 12px 32px;
+  font-size: 1.1rem;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.action-button.secondary {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.action-button.secondary:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.hero-stats {
+  display: flex;
+  justify-content: center;
+  gap: 80px;
+  margin-top: 60px;
+}
+
+.stat-item {
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 8px;
+}
+
+.stat-label {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.features-section {
+  padding: 100px 0;
+  background: var(--bg-color);
+}
+
+.container {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 24px;
 }
 
-.features {
-  margin-bottom: 80px;
+.section-title {
+  font-size: 2.5rem;
+  color: var(--text-primary);
+  text-align: center;
+  margin-bottom: 60px;
+}
+
+.features-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 30px;
+  gap: 40px;
 }
 
 .feature-card {
-  background: #fff;
-  padding: 40px 30px;
-  border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
   text-align: center;
-  transition: transform 0.3s ease;
-  animation: fadeInUp 0.6s ease both;
-  animation-play-state: paused;
+  padding: 40px;
+  background: var(--bg-color-overlay);
+  border-radius: 16px;
+  transition: all 0.3s ease;
 }
 
 .feature-card:hover {
-  transform: translateY(-5px);
+  transform: translateY(-10px);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
 }
 
-.feature-card.visible {
-  animation-play-state: running;
-}
-
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(30px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.feature-card .el-icon {
-  margin-bottom: 20px;
+.feature-icon {
+  color: var(--primary-color);
+  margin-bottom: 24px;
 }
 
 .feature-card h3 {
-  color: #303133;
-  margin-bottom: 15px;
-  font-size: 1.25rem;
+  font-size: 1.5rem;
+  color: var(--text-primary);
+  margin-bottom: 16px;
 }
 
 .feature-card p {
-  color: #606266;
+  color: var(--text-regular);
   line-height: 1.6;
+}
+
+.latest-auctions {
+  padding: 100px 0;
+  background: var(--bg-color);
 }
 
 .section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 30px;
+  margin-bottom: 40px;
 }
 
-.section-header h2 {
-  font-size: 1.75rem;
-  color: #303133;
-  margin: 0;
+.view-all {
+  font-size: 1.1rem;
+}
+
+.auction-col {
+  margin-bottom: 24px;
 }
 
 .auction-card {
-  margin-bottom: 30px;
-  transition: transform 0.3s ease;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: var(--bg-color-overlay);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .auction-card:hover {
   transform: translateY(-5px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--el-box-shadow);
 }
 
 .auction-image {
   width: 100%;
   height: 240px;
   object-fit: cover;
-  border-radius: 8px 8px 0 0;
+}
+
+.image-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-color);
+  color: var(--text-secondary);
 }
 
 .auction-info {
   padding: 20px;
 }
 
-.auction-info h3 {
-  font-size: 1.1rem;
-  color: #303133;
-  margin: 0 0 15px;
+.auction-title {
+  font-size: 1.2rem;
+  color: var(--text-primary);
+  margin-bottom: 8px;
   font-weight: 500;
-  line-height: 1.4;
 }
 
-.price-info, .time-info {
+.auction-description {
+  color: var(--text-regular);
+  margin-bottom: 16px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.auction-meta {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  color: #606266;
-  font-size: 0.95rem;
 }
 
-.price {
-  color: #409EFF;
-  font-size: 1.2rem;
-  font-weight: 600;
-  background: rgba(64, 158, 255, 0.1);
-  padding: 4px 8px;
-  border-radius: 4px;
-}
-
-.detail-button {
-  width: 100%;
-  margin-top: 15px;
-}
-
-@media (max-width: 768px) {
-  .features {
-    grid-template-columns: 1fr;
-    gap: 20px;
-  }
-
-  .banner {
-    padding: 60px 20px;
-  }
-
-  .banner h1 {
-    font-size: 2rem;
-  }
-
-  .banner p {
-    font-size: 1rem;
-  }
-
-  .auction-card {
-    margin-bottom: 20px;
-  }
-
-  .feature-card {
-    padding: 30px 20px;
-  }
-}
-
-html {
-  scroll-behavior: smooth;
-}
-
-.el-loading-mask {
-  background-color: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(4px);
-}
-
-.banner-buttons .el-button {
-  padding: 12px 24px;
+.auction-price {
+  font-size: 1.1rem;
+  color: var(--primary-color);
   font-weight: 500;
 }
 
-.banner-buttons .el-button--primary {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: transparent;
+.auction-status {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.9rem;
+  color: #fff;
 }
 
-.banner-buttons .el-button--primary:hover {
-  background: rgba(255, 255, 255, 0.3);
+.status-active {
+  background: var(--success-color);
 }
 
-.banner-buttons .el-button--default {
-  background: transparent;
-  border-color: rgba(255, 255, 255, 0.6);
-  color: white;
+.status-ended {
+  background: var(--text-secondary);
 }
 
-.banner-buttons .el-button--default:hover {
-  background: rgba(255, 255, 255, 0.1);
+.status-pending {
+  background: var(--warning-color);
+}
+
+@media (max-width: 768px) {
+  .hero-title {
+    font-size: 2.5rem;
+  }
+
+  .hero-description {
+    font-size: 1.2rem;
+  }
+
+  .hero-stats {
+    flex-direction: column;
+    gap: 40px;
+  }
+
+  .features-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .section-title {
+    font-size: 2rem;
+  }
+
+  .hero-actions {
+    flex-direction: column;
+  }
+
+  .action-button {
+    width: 100%;
+  }
 }
 </style>

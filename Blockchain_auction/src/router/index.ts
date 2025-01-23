@@ -19,7 +19,7 @@ const routes: RouteRecordRaw[] = [
     props: true
   },
   {
-    path: '/create',
+    path: '/create-auction',
     name: 'create-auction',
     component: () => import('../views/CreateAuctionView.vue')
   },
@@ -27,6 +27,11 @@ const routes: RouteRecordRaw[] = [
     path: '/my-auctions',
     name: 'my-auctions',
     component: () => import('../views/MyAuctionsView.vue')
+  },
+  {
+    path: '/about',
+    name: 'about',
+    component: () => import('../views/AboutView.vue')
   }
 ]
 

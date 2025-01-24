@@ -19,7 +19,7 @@
               @click="goToDetail(auction.id)"
             >
               <el-image
-                :src="auction.image"
+                :src="auction.imageLink"
                 class="auction-image"
                 fit="cover"
               >
@@ -31,10 +31,10 @@
               </el-image>
               <div class="auction-info">
                 <h3 class="auction-title">{{ auction.name }}</h3>
-                <p class="auction-description">{{ auction.description }}</p>
+                <p class="auction-description">{{ auction.descLink }}</p>
                 <div class="auction-meta">
-                  <span class="auction-price">{{ auction.currentPrice }} ETH</span>
-                  <span :class="['auction-status', `status-${auction.status}`]">
+                  <span class="auction-price">{{ auction.startPrice }} ETH</span>
+                  <span :class="['auction-status', `status-${auction.status.toLowerCase()}`]">
                     {{ getStatusText(auction.status) }}
                   </span>
                 </div>
@@ -58,7 +58,7 @@
               @click="goToDetail(auction.id)"
             >
               <el-image
-                :src="auction.image"
+                :src="auction.imageLink"
                 class="auction-image"
                 fit="cover"
               >
@@ -70,10 +70,10 @@
               </el-image>
               <div class="auction-info">
                 <h3 class="auction-title">{{ auction.name }}</h3>
-                <p class="auction-description">{{ auction.description }}</p>
+                <p class="auction-description">{{ auction.descLink }}</p>
                 <div class="auction-meta">
-                  <span class="auction-price">{{ auction.currentPrice }} ETH</span>
-                  <span :class="['auction-status', `status-${auction.status}`]">
+                  <span class="auction-price">{{ auction.highestBid }} ETH</span>
+                  <span :class="['auction-status', `status-${auction.status.toLowerCase()}`]">
                     {{ getStatusText(auction.status) }}
                   </span>
                 </div>
@@ -87,40 +87,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Picture } from '@element-plus/icons-vue'
-
-interface Auction {
-  id: number
-  name: string
-  description: string
-  currentPrice: string
-  startPrice: string
-  endTime: number
-  seller: string
-  images: string[]
-  image?: string
-  status: 'ended' | 'active' | 'pending'
-  bidCount: number
-  category: string
-}
+import { web3Service } from '@/utils/web3'
+import { ElMessage } from 'element-plus'
+import type { Product } from '@/utils/web3'
 
 const router = useRouter()
 const activeTab = ref('created')
 
-// 模拟数据
-const createdAuctions = ref<Auction[]>([])
-const participatedAuctions = ref<Auction[]>([])
+const createdAuctions = ref<Product[]>([])
+const participatedAuctions = ref<Product[]>([])
+const loading = ref(false)
 
 const hasCreatedAuctions = computed(() => createdAuctions.value.length > 0)
 const hasParticipatedAuctions = computed(() => participatedAuctions.value.length > 0)
 
 const getStatusText = (status: string) => {
   const statusMap: Record<string, string> = {
-    active: '进行中',
-    ended: '已结束',
-    pending: '即将开始'
+    Open: '进行中',
+    Sold: '已结束',
+    Unsold: '流拍'
   }
   return statusMap[status] || status
 }
@@ -128,6 +116,88 @@ const getStatusText = (status: string) => {
 const goToDetail = (id: number) => {
   router.push(`/auction/${id}`)
 }
+
+const loadAuctions = async () => {
+  loading.value = true
+  try {
+    // 先连接钱包获取账户
+    const account = await web3Service.connectWallet()
+    console.log('当前用户地址:', account)
+
+    if (!account) {
+      throw new Error('未连接钱包')
+    }
+
+    // 获取所有拍卖
+    const { items: allProducts } = await web3Service.getProducts(1, 100)
+    console.log('获取到所有拍卖:', allProducts)
+    
+    if (!Array.isArray(allProducts)) {
+      throw new Error('获取拍卖列表失败：返回数据格式错误')
+    }
+    
+    // 过滤出用户创建的拍卖
+    createdAuctions.value = allProducts.filter(product => {
+      // 确保 seller 是字符串类型
+      const seller = String(product.seller || '').toLowerCase()
+      const currentAccount = String(account || '').toLowerCase()
+      const isCreator = seller === currentAccount
+      console.log('检查拍卖创建者:', {
+        productId: product.id,
+        seller,
+        currentAccount,
+        isCreator,
+        productData: product
+      })
+      return isCreator
+    })
+    console.log('用户创建的拍卖:', createdAuctions.value)
+    
+    // 过滤出用户参与的拍卖（检查本地存储的出价记录和最高出价者）
+    const participatedIds = new Set()
+    allProducts.forEach(product => {
+      // 检查本地存储的出价记录
+      const bids = JSON.parse(localStorage.getItem(`bids_${product.id}`) || '[]')
+      if (bids.length > 0) {
+        participatedIds.add(product.id)
+        console.log(`发现参与的拍卖(本地出价记录) ID:${product.id}`)
+      }
+      // 检查是否是最高出价者
+      const highestBidder = String(product.highestBidder || '').toLowerCase()
+      const currentAccount = String(account || '').toLowerCase()
+      if (highestBidder === currentAccount) {
+        participatedIds.add(product.id)
+        console.log(`发现参与的拍卖(最高出价) ID:${product.id}`)
+      }
+    })
+    
+    participatedAuctions.value = allProducts.filter(product => 
+      participatedIds.has(product.id)
+    )
+    console.log('用户参与的拍卖:', participatedAuctions.value)
+
+    // 检查计算属性
+    console.log('是否有创建的拍卖:', hasCreatedAuctions.value)
+    console.log('是否有参与的拍卖:', hasParticipatedAuctions.value)
+
+    if (createdAuctions.value.length === 0 && participatedAuctions.value.length === 0) {
+      console.log('未找到任何拍卖，可能是数据还未同步，5秒后重试...')
+      setTimeout(loadAuctions, 5000)
+    }
+  } catch (error) {
+    console.error('加载拍卖列表失败:', error)
+    ElMessage.error('加载拍卖列表失败: ' + (error as Error).message)
+    // 5秒后重试
+    setTimeout(loadAuctions, 5000)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 在组件挂载时加载数据
+onMounted(() => {
+  loadAuctions()
+})
 </script>
 
 <style scoped>
@@ -249,17 +319,17 @@ const goToDetail = (id: number) => {
   font-size: 12px;
 }
 
-.status-active {
+.status-open {
   background-color: var(--success-color);
   color: #fff;
 }
 
-.status-ended {
+.status-sold {
   background-color: var(--text-secondary);
   color: #fff;
 }
 
-.status-pending {
+.status-unsold {
   background-color: var(--warning-color);
   color: #fff;
 }

@@ -9,7 +9,7 @@ contract EcommerceStore {
 
     uint public productIndex;//商品计数器
     mapping(address => mapping(uint256 => Product)) stores;//创建者关联他发布的所有商品
-    mapping(uint256 => address) productIdInStore;//商品关联创建者
+    mapping(uint256 => address) public productIdInStore;//商品关联创建者
     mapping(uint256 => address) productEscrow;//商品关联Escrow合约地址
 
     //商品数据结构

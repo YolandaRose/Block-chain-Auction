@@ -37,10 +37,15 @@
                 class="auction-col">
           <el-card class="auction-card" shadow="hover" @click="goToDetail(auction.id)">
             <div class="auction-image">
-              <el-image :src="auction.image" fit="cover">
+              <el-image
+                class="auction-image"
+                :src="auction.imageLink"
+                fit="cover"
+                loading="lazy"
+              >
                 <template #error>
-                  <div class="image-placeholder">
-                    <el-icon><Picture /></el-icon>
+                  <div class="image-error">
+                    <el-icon><picture-filled /></el-icon>
                   </div>
                 </template>
               </el-image>
@@ -52,17 +57,17 @@
               <h3 class="auction-title">{{ auction.name }}</h3>
               <div class="price-info">
                 <span class="label">当前价格</span>
-                <span class="price">{{ auction.currentPrice }} ETH</span>
+                <span class="price">{{ auction.highestBid }} ETH</span>
               </div>
               <div class="time-info">
                 <span class="label">结束时间</span>
-                <span class="time" :class="{ 'ending-soon': isEndingSoon(auction.endTime) }">
-                  {{ formatTime(auction.endTime) }}
+                <span class="time" :class="{ 'ending-soon': isEndingSoon(auction.auctionEndTime) }">
+                  {{ formatTime(auction.auctionEndTime) }}
                 </span>
               </div>
               <div class="bid-info">
                 <span class="label">出价次数</span>
-                <span class="bids">{{ auction.bidCount }}次</span>
+                <span class="bids">{{ auction.totalBids }}次</span>
               </div>
             </div>
           </el-card>
@@ -134,10 +139,10 @@ const fetchAuctions = async () => {
       category: category.value || undefined,
       sortBy: sortBy.value,
       search: searchQuery.value || undefined
-    } as AuctionParams)
-    // 更新总数
-    totalItems.value = store.total || 0
+    })
+    totalItems.value = store.total
   } catch (error: any) {
+    console.error('加载拍卖列表失败:', error)
     ElMessage.error(error.message || '加载拍卖列表失败')
   } finally {
     loading.value = false
@@ -146,9 +151,9 @@ const fetchAuctions = async () => {
 
 // 计算属性
 const filteredAuctions = computed(() => {
-  return (store.auctions as Auction[]).map(auction => ({
+  return store.auctions.map(auction => ({
     ...auction,
-    image: auction.images[0] || '' // 使用第一张图片作为主图
+    image: auction.images?.[0] || '' // 使用可选链操作符
   }))
 })
 

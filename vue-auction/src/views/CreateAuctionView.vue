@@ -56,22 +56,31 @@
           </el-select>
         </el-form-item>
 
+        <el-form-item label="商品状况" prop="condition">
+          <el-select v-model="form.condition" placeholder="请选择商品状况">
+            <el-option label="全新" :value="0" />
+            <el-option label="二手" :value="1" />
+          </el-select>
+        </el-form-item>
+
         <el-form-item label="商品图片" prop="images">
           <el-upload
             v-model:file-list="fileList"
             class="upload-demo"
-            action="/api/upload"
             :auto-upload="false"
             :limit="5"
             list-type="picture-card"
             :on-change="handleImageChange"
+            :before-upload="beforeUpload"
           >
             <template #trigger>
               <el-icon><Plus /></el-icon>
             </template>
             <template #tip>
               <div class="el-upload__tip">
-                支持 jpg/png 文件，最多5张，每张不超过5MB
+                支持jpg/png文件，每张不超过5MB，最多5张
+                <br>
+                图片将保存在本地IPFS节点中
               </div>
             </template>
           </el-upload>
@@ -98,8 +107,9 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import { useAuctionStore } from '@/stores/auction'
-import { ElMessage, type FormInstance, type UploadFile } from 'element-plus'
+import { ElMessage, type FormInstance, type UploadFile, ElLoading } from 'element-plus'
 import type { UploadUserFile } from 'element-plus'
+import { ipfsService } from '../utils/ipfs'
 
 const router = useRouter()
 const store = useAuctionStore()
@@ -115,6 +125,7 @@ const form = ref({
   startPrice: 0.1,
   duration: 168, // 默认7天
   category: '',
+  condition: 0, // 默认全新
   images: [] as string[]
 })
 
@@ -124,8 +135,8 @@ const rules = {
     { min: 2, max: 50, message: '长度在 2 到 50 个字符', trigger: 'blur' }
   ],
   description: [
-    { required: true, message: '请输入拍卖品描述', trigger: 'blur' },
-    { min: 10, max: 500, message: '长度在 10 到 500 个字符', trigger: 'blur' }
+    { required: false },
+    { max: 500, message: '长度不能超过 500 个字符', trigger: 'blur' }
   ],
   startPrice: [
     { required: true, message: '请设置起拍价格', trigger: 'blur' },
@@ -137,17 +148,82 @@ const rules = {
   category: [
     { required: true, message: '请选择商品分类', trigger: 'change' }
   ],
+  condition: [
+    { required: true, message: '请选择商品状况', trigger: 'change' }
+  ],
   images: [
-    { required: true, message: '请上传至少一张商品图片', trigger: 'change' },
-    { type: 'array', min: 1, max: 5, message: '请上传1-5张商品图片', trigger: 'change' }
+    { type: 'array', max: 5, message: '最多上传5张商品图片', trigger: 'change' }
   ]
 }
 
 const isWalletConnected = computed(() => !!store.account)
 
-const handleImageChange = (uploadFile: UploadFile) => {
-  // 这里可以添加图片预处理逻辑
-  form.value.images = fileList.value.map(file => file.url || '')
+const handleImageChange = async (uploadFile: UploadFile) => {
+  if (!uploadFile.raw) {
+    ElMessage.error('文件无效')
+    return
+  }
+  
+  const loadingInstance = ElLoading.service({
+    text: '正在上传到IPFS...',
+    background: 'rgba(0, 0, 0, 0.7)'
+  })
+  
+  try {
+    console.log('准备上传文件:', uploadFile.raw)
+    
+    // 上传图片到本地IPFS节点
+    const hash = await ipfsService.uploadImage(uploadFile.raw)
+    console.log('获取到IPFS哈希:', hash)
+    
+    // 获取IPFS URL
+    const ipfsUrl = ipfsService.getIPFSUrl(hash)
+    console.log('IPFS URL:', ipfsUrl)
+    
+    // 更新表单数据
+    form.value.images = [...form.value.images, ipfsUrl]
+    
+    ElMessage.success({
+      message: `图片上传成功! CID: ${hash}`,
+      duration: 5000
+    })
+  } catch (error: any) {
+    console.error('图片上传失败:', error)
+    ElMessage.error({
+      message: error.message || 'IPFS上传失败，请检查IPFS节点状态',
+      duration: 5000
+    })
+    // 从文件列表中移除失败的文件
+    const index = fileList.value.indexOf(uploadFile)
+    if (index > -1) {
+      fileList.value.splice(index, 1)
+    }
+  } finally {
+    loadingInstance.close()
+  }
+}
+
+const beforeUpload = (file: UploadUserFile) => {
+  if (!file.raw) {
+    ElMessage.error('文件上传失败')
+    return false
+  }
+
+  // 检查文件类型
+  const isImage = file.raw.type.startsWith('image/')
+  if (!isImage) {
+    ElMessage.error('只能上传图片文件!')
+    return false
+  }
+  
+  // 检查文件大小（限制为5MB）
+  const isLt5M = file.raw.size / 1024 / 1024 < 5
+  if (!isLt5M) {
+    ElMessage.error('图片大小不能超过5MB!')
+    return false
+  }
+  
+  return true
 }
 
 const handleSubmit = async () => {
@@ -155,28 +231,59 @@ const handleSubmit = async () => {
   
   try {
     await formRef.value.validate()
-    
-    if (!isWalletConnected.value) {
-      ElMessage.warning('请先连接钱包')
-      return
-    }
-
     submitting.value = true
     
-    // 调用合约创建拍卖
-    await store.createAuction({
-      name: form.value.name,
-      description: form.value.description,
-      startPrice: form.value.startPrice,
-      duration: form.value.duration * 3600, // 转换为秒
-      category: form.value.category,
-      images: form.value.images
+    // 计算拍卖开始和结束时间
+    const now = Math.floor(Date.now() / 1000)
+    const auctionStartTime = now
+    const auctionEndTime = now + Number(form.value.duration) * 24 * 60 * 60
+    
+    // 确保所有字符串参数都经过 trim 处理
+    const name = form.value.name?.trim() || ''
+    const category = form.value.category?.trim() || ''
+    const description = form.value.description?.trim() || '无'
+    const imageLink = form.value.images?.[0] || ''
+    
+    // 验证必填字段
+    if (!name || !category) {
+      throw new Error('请填写所有必填字段')
+    }
+    
+    // 验证时间
+    if (auctionEndTime <= auctionStartTime) {
+      throw new Error('拍卖结束时间必须大于开始时间')
+    }
+    
+    // 验证起拍价
+    if (isNaN(Number(form.value.startPrice)) || Number(form.value.startPrice) <= 0) {
+      throw new Error('起拍价必须大于0')
+    }
+    
+    const params = {
+      name,
+      category,
+      imageLink,
+      descLink: description,
+      auctionStartTime,
+      auctionEndTime,
+      startPrice: form.value.startPrice.toString(),
+      condition: form.value.condition
+    }
+    
+    console.log('准备提交到store的参数:', params)
+    
+    const txHash = await store.createAuction(params)
+    ElMessage.success({
+      message: `拍卖创建成功! 交易哈希: ${txHash}`,
+      duration: 5000
     })
-
-    ElMessage.success('拍卖创建成功')
     router.push('/auctions')
   } catch (error: any) {
-    ElMessage.error(error.message || '创建拍卖失败')
+    console.error('创建拍卖失败:', error)
+    ElMessage.error({
+      message: `创建拍卖失败: ${error.message}`,
+      duration: 5000
+    })
   } finally {
     submitting.value = false
   }
@@ -254,9 +361,10 @@ const handleSubmit = async () => {
   color: var(--text-secondary);
   font-size: 12px;
   margin-top: 8px;
+  line-height: 1.5;
 }
 
-:deep(.el-upload--picture-card) {
+.upload-demo :deep(.el-upload--picture-card) {
   width: 120px;
   height: 120px;
   line-height: 120px;
@@ -264,12 +372,12 @@ const handleSubmit = async () => {
   border-color: var(--border-color);
 }
 
-:deep(.el-upload--picture-card:hover) {
+.upload-demo :deep(.el-upload--picture-card:hover) {
   border-color: var(--primary-color);
   color: var(--primary-color);
 }
 
-:deep(.el-upload-list__item) {
+.upload-demo :deep(.el-upload-list__item) {
   background-color: var(--bg-color);
   border-color: var(--border-color);
 }

@@ -2,57 +2,38 @@ import { create } from 'ipfs-http-client'
 
 class IPFSService {
   private ipfs
+  private gateway = 'http://localhost:9001/ipfs/'
 
   constructor() {
-    // 连接到本地 IPFS 节点
+    // 连接到本地IPFS节点
     this.ipfs = create({
       host: 'localhost',
       port: 5002,
-      protocol: 'http',
-      headers: {
-        'Access-Control-Allow-Origin': '*'
-      }
+      protocol: 'http'
     })
   }
 
   async uploadImage(file: File): Promise<string> {
-    if (!this.ipfs) {
-      throw new Error('IPFS 客户端未初始化')
-    }
-
     try {
-      console.log('开始上传文件到 IPFS:', file.name)
-      
-      // 将文件转换为 Buffer
+      // 读取文件内容
       const buffer = await file.arrayBuffer()
       
-      // 上传到 IPFS
-      const result = await this.ipfs.add({
-        path: file.name,
-        content: new Uint8Array(buffer)
-      })
+      // 上传到IPFS
+      const result = await this.ipfs.add(buffer)
       
-      console.log('IPFS 上传成功:', result)
-      return result.cid.toString()
-    } catch (error) {
-      console.error('IPFS 上传错误:', error)
-      if (error instanceof Error) {
-        throw new Error(`上传图片到 IPFS 失败: ${error.message}`)
-      } else {
-        throw new Error('上传图片到 IPFS 失败，请确保 IPFS 节点正在运行且端口 5002 可访问')
-      }
+      // 返回文件的CID (Content Identifier)
+      return result.path
+    } catch (error: any) {
+      console.error('IPFS上传失败:', error)
+      throw new Error(error.message || 'IPFS上传失败')
     }
   }
 
-  async uploadImages(files: File[]): Promise<string[]> {
-    const uploadPromises = files.map(file => this.uploadImage(file))
-    return Promise.all(uploadPromises)
-  }
-
-  getIPFSUrl(hash: string): string {
-    // 使用网关端口 9001 访问文件
-    return `http://localhost:9001/ipfs/${hash}`
+  getIPFSUrl(cid: string): string {
+    // 返回可访问的IPFS URL
+    return `${this.gateway}${cid}`
   }
 }
 
+// 创建单例实例
 export const ipfsService = new IPFSService() 

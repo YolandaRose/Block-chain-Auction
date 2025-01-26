@@ -34,7 +34,7 @@
                 <p class="auction-description">{{ auction.descLink }}</p>
                 <div class="auction-meta">
                   <span class="auction-price">{{ auction.startPrice }} ETH</span>
-                  <span :class="['auction-status', `status-${auction.status.toLowerCase()}`]">
+                  <span :class="['auction-status', getStatusClass(auction.status)]">
                     {{ getStatusText(auction.status) }}
                   </span>
                 </div>
@@ -73,7 +73,7 @@
                 <p class="auction-description">{{ auction.descLink }}</p>
                 <div class="auction-meta">
                   <span class="auction-price">{{ auction.highestBid }} ETH</span>
-                  <span :class="['auction-status', `status-${auction.status.toLowerCase()}`]">
+                  <span :class="['auction-status', getStatusClass(auction.status)]">
                     {{ getStatusText(auction.status) }}
                   </span>
                 </div>
@@ -104,20 +104,37 @@ const loading = ref(false)
 const hasCreatedAuctions = computed(() => createdAuctions.value.length > 0)
 const hasParticipatedAuctions = computed(() => participatedAuctions.value.length > 0)
 
-const getStatusText = (status: string) => {
-  const statusMap: Record<string, string> = {
-    Open: '进行中',
-    Sold: '已结束',
-    Unsold: '流拍'
+const getStatusText = (status: number) => {
+  switch (status) {
+    case 0:
+      return '进行中'
+    case 1:
+      return '已结束'
+    case 2:
+      return '流拍'
+    default:
+      return '未知'
   }
-  return statusMap[status] || status
+}
+
+const getStatusClass = (status: number) => {
+  switch (status) {
+    case 0:
+      return 'status-open'
+    case 1:
+      return 'status-sold'
+    case 2:
+      return 'status-unsold'
+    default:
+      return ''
+  }
 }
 
 const goToDetail = (id: number) => {
   router.push(`/auction/${id}`)
 }
 
-const loadAuctions = async () => {
+const loadAuctions = async (retryCount = 0) => {
   loading.value = true
   try {
     // 先连接钱包获取账户
@@ -128,6 +145,8 @@ const loadAuctions = async () => {
       throw new Error('未连接钱包')
     }
 
+    const currentUserAddress = account.toLowerCase()
+
     // 获取所有拍卖
     const { items: allProducts } = await web3Service.getProducts(1, 100)
     console.log('获取到所有拍卖:', allProducts)
@@ -137,21 +156,18 @@ const loadAuctions = async () => {
     }
     
     // 过滤出用户创建的拍卖
-    createdAuctions.value = allProducts.filter(product => {
-      // 确保 seller 是字符串类型
-      const seller = String(product.seller || '').toLowerCase()
-      const currentAccount = String(account || '').toLowerCase()
-      const isCreator = seller === currentAccount
-      console.log('检查拍卖创建者:', {
-        productId: product.id,
-        seller,
-        currentAccount,
-        isCreator,
-        productData: product
-      })
-      return isCreator
-    })
-    console.log('用户创建的拍卖:', createdAuctions.value)
+    const createdProducts = []
+    for (const product of allProducts) {
+      try {
+        const seller = await web3Service.getSellerByProductId(product.id)
+        if (seller.toLowerCase() === currentUserAddress) {
+          createdProducts.push(product)
+        }
+      } catch (error) {
+        console.error(`获取商品 ${product.id} 的卖家地址失败:`, error)
+      }
+    }
+    createdAuctions.value = createdProducts
     
     // 过滤出用户参与的拍卖（检查本地存储的出价记录和最高出价者）
     const participatedIds = new Set()
@@ -160,35 +176,34 @@ const loadAuctions = async () => {
       const bids = JSON.parse(localStorage.getItem(`bids_${product.id}`) || '[]')
       if (bids.length > 0) {
         participatedIds.add(product.id)
-        console.log(`发现参与的拍卖(本地出价记录) ID:${product.id}`)
       }
       // 检查是否是最高出价者
       const highestBidder = String(product.highestBidder || '').toLowerCase()
-      const currentAccount = String(account || '').toLowerCase()
-      if (highestBidder === currentAccount) {
+      if (highestBidder === currentUserAddress) {
         participatedIds.add(product.id)
-        console.log(`发现参与的拍卖(最高出价) ID:${product.id}`)
       }
     })
     
     participatedAuctions.value = allProducts.filter(product => 
       participatedIds.has(product.id)
     )
-    console.log('用户参与的拍卖:', participatedAuctions.value)
 
-    // 检查计算属性
-    console.log('是否有创建的拍卖:', hasCreatedAuctions.value)
-    console.log('是否有参与的拍卖:', hasParticipatedAuctions.value)
-
-    if (createdAuctions.value.length === 0 && participatedAuctions.value.length === 0) {
-      console.log('未找到任何拍卖，可能是数据还未同步，5秒后重试...')
-      setTimeout(loadAuctions, 5000)
+    if (createdAuctions.value.length === 0 && participatedAuctions.value.length === 0 && retryCount < 2) {
+      console.log(`未找到任何拍卖，第${retryCount + 1}次重试...`)
+      setTimeout(() => loadAuctions(retryCount + 1), 5000)
+    } else if (retryCount >= 2) {
+      console.log('达到最大重试次数')
     }
   } catch (error) {
     console.error('加载拍卖列表失败:', error)
     ElMessage.error('加载拍卖列表失败: ' + (error as Error).message)
-    // 5秒后重试
-    setTimeout(loadAuctions, 5000)
+    // 如果还没达到最大重试次数，则重试
+    if (retryCount < 2) {
+      console.log(`加载失败，第${retryCount + 1}次重试...`)
+      setTimeout(() => loadAuctions(retryCount + 1), 5000)
+    } else {
+      console.log('达到最大重试次数')
+    }
   } finally {
     loading.value = false
   }

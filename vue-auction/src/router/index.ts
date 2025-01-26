@@ -29,15 +29,16 @@ const router = createRouter({
       props: true
     },
     {
+      path: '/auction/:id',
+      redirect: to => {
+        // 重定向到 product/:id
+        return { path: `/product/${to.params.id}` }
+      }
+    },
+    {
       path: '/auctions',
       name: 'auctions',
       component: () => import('../views/AuctionsView.vue')
-    },
-    {
-      path: '/auction/:id',
-      name: 'auction-detail',
-      component: () => import('../views/AuctionDetailView.vue'),
-      props: true
     },
     {
       path: '/my-auctions',

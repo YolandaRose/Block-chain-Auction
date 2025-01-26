@@ -100,29 +100,58 @@ const formatTime = (timestamp: number) => {
 }
 
 // 加载商品信息
-const loadProduct = async () => {
+const loadProduct = async (retryCount = 0) => {
+  const maxRetries = 3
   try {
     loading.value = true
     error.value = ''
     
     const productId = Number(route.params.id)
     console.log('路由参数:', route.params)
+    console.log('商品ID:', productId)
     
     if (isNaN(productId)) {
       throw new Error('无效的商品ID')
     }
 
+    if (!web3Service) {
+      throw new Error('Web3服务未初始化')
+    }
+
     console.log('正在加载商品ID:', productId)
     const data = await web3Service.getProduct(productId)
+    console.log('获取到商品数据:', data)
     
     if (!data) {
       throw new Error('商品不存在')
     }
 
-    console.log('获取到商品数据:', data)
-    product.value = data
+    // 使用默认值处理可能为空的字段
+    product.value = {
+      ...data,
+      name: data.name || '未命名商品',
+      category: data.category || '未分类',
+      imageLink: data.imageLink || '',
+      descLink: data.descLink || '暂无描述',
+      startPrice: data.startPrice || '0',
+      highestBid: data.highestBid || '0',
+      secondHighestBid: data.secondHighestBid || '0',
+      totalBids: data.totalBids || 0,
+      status: data.status || 0,
+      condition: data.condition || 0,
+      seller: data.seller || '0x0000000000000000000000000000000000000000'
+    }
   } catch (err: any) {
     console.error('加载商品失败:', err)
+    console.error('错误堆栈:', err.stack)
+    
+    // 如果还有重试次数，则等待后重试
+    if (retryCount < maxRetries) {
+      console.log(`第 ${retryCount + 1} 次重试加载商品...`)
+      await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)))
+      return loadProduct(retryCount + 1)
+    }
+    
     error.value = err.message || '加载商品失败'
     product.value = null
   } finally {
@@ -131,9 +160,9 @@ const loadProduct = async () => {
 }
 
 // 在组件挂载时加载数据
-onMounted(() => {
+onMounted(async () => {
   console.log('组件已挂载，开始加载数据')
-  loadProduct()
+  await loadProduct()
 })
 </script>
 

@@ -55,6 +55,19 @@ interface BidInfo {
   [key: number]: string;
 }
 
+interface ContractProduct {
+  0: string  // id
+  1: string  // name
+  2: string  // category
+  3: string  // imageLink
+  4: string  // descLink
+  5: string  // auctionStartTime
+  6: string  // auctionEndTime
+  7: string  // startPrice
+  8: number  // status
+  9: number  // condition
+}
+
 class Web3Service {
   private web3: Web3 | null = null
   private contract: Contract<AbiItem[]> | null = null
@@ -93,23 +106,10 @@ class Web3Service {
       }
       
       console.log('初始化合约，使用地址:', contractAddress)
-      
-      if (!Array.isArray(ecommerceStoreABI.abi)) {
-        throw new Error('合约 ABI 格式错误')
-      }
 
-      // 检查 ABI 中是否包含必要的方法
-      const hasProductIdInStore = ecommerceStoreABI.abi.some(
-        item => item.type === 'function' && item.name === 'productIdInStore'
-      )
-      
-      if (!hasProductIdInStore) {
-        console.error('ABI 中未找到 productIdInStore 方法')
-        throw new Error('ABI 中缺少必要的方法')
-      }
-
+      // 直接使用 ABI 数组
       this.contract = new this.web3.eth.Contract(
-        ecommerceStoreABI.abi as AbiItem[],
+        ecommerceStoreABI.abi,
         contractAddress
       )
       
@@ -132,9 +132,50 @@ class Web3Service {
     }
   }
 
-  private async ensureInitialized() {
-    if (!this.initialized) {
-      await this.init()
+  private async ensureInitialized(): Promise<void> {
+    if (this.initialized) {
+      return
+    }
+
+    try {
+      // 检查是否已经有 Web3 实例
+      if (typeof window.ethereum !== 'undefined') {
+        console.log('发现 MetaMask')
+        this.web3 = new Web3(window.ethereum)
+      } else {
+        console.log('未发现 MetaMask，使用本地节点')
+        const provider = new Web3.providers.HttpProvider('http://localhost:8545')
+        this.web3 = new Web3(provider)
+      }
+
+      // 获取网络ID
+      const networkId = await this.web3.eth.net.getId()
+      console.log('当前网络ID:', networkId)
+
+      // 确保合约地址正确
+      const contractAddress = import.meta.env.VITE_CONTRACT_ADDRESS
+      console.log('使用合约地址:', contractAddress)
+
+      // 创建合约实例
+      this.contract = new this.web3.eth.Contract(
+        ecommerceStoreABI.abi,
+        contractAddress
+      )
+
+      if (!this.contract) {
+        throw new Error('合约初始化失败')
+      }
+
+      // 验证合约是否正确初始化
+      const productCount = await this.contract.methods.getProductCount().call()
+      console.log('当前商品总数:', productCount)
+
+      this.initialized = true
+      console.log('Web3 服务初始化成功')
+    } catch (error) {
+      console.error('Web3 服务初始化失败:', error)
+      this.initialized = false
+      throw error
     }
   }
 
@@ -262,74 +303,83 @@ class Web3Service {
     }
   }
 
+  async getSellerByProductId(productId: number): Promise<string> {
+    await this.ensureInitialized()
+
+    if (!this.contract) {
+      throw new Error('合约未初始化')
+    }
+
+      try {
+      const sellerAddress = await this.contract.methods.productIdInStore(productId).call() as string
+      return sellerAddress
+    } catch (error) {
+      console.error('获取卖家地址失败:', error)
+      throw error
+    }
+  }
+
   async getProduct(productId: number): Promise<Product> {
+    await this.ensureInitialized()
+
     if (!this.contract) {
       throw new Error('合约未初始化')
     }
 
     try {
-      console.log('正在获取商品信息，ID:', productId)
+      console.log('正在获取商品:', productId)
       
-      // 获取商品基本信息
-      const result = await this.contract.methods.getProduct(productId).call()
-      console.log('商品原始数据:', result)
-
-      // 检查返回的数据
-      if (!result) {
-        throw new Error('获取商品信息失败：返回数据为空')
-      }
-
-      // 确保结果是一个对象
-      if (typeof result !== 'object') {
-        throw new Error('获取商品信息失败：返回数据格式错误')
-      }
+      // 获取商品信息
+      const product = await this.contract.methods.getProduct(productId).call()
+      console.log('获取到原始商品数据:', product)
 
       // 获取卖家地址
-      let seller = ''
-      try {
-        seller = await this.contract.methods.productIdInStore(productId).call()
-        console.log('从 productIdInStore 映射获取到卖家地址:', seller)
-      } catch (error) {
-        console.error('获取卖家地址失败:', error)
-      }
+      const sellerAddress = await this.contract.methods.productIdInStore(productId).call()
+      console.log('获取到卖家地址:', sellerAddress)
 
-      // 获取最高出价信息
+      // 获取出价信息
       const bidInfo = await this.contract.methods.highestBidderInfo(productId).call()
-      console.log('出价信息:', bidInfo)
+      console.log('获取到出价信息:', bidInfo)
 
-      if (!bidInfo || typeof bidInfo !== 'object') {
-        throw new Error('获取出价信息失败：返回数据格式错误')
-      }
-
+      // 获取总出价次数
       const totalBids = await this.contract.methods.totalBids(productId).call()
+      console.log('获取到总出价次数:', totalBids)
 
-      const product: Product = {
-        id: productId,
-        name: String(result[1] || ''),
-        category: String(result[2] || ''),
-        imageLink: String(result[3] || ''),
-        descLink: String(result[4] || ''),
-        auctionStartTime: Number(result[5] || 0),
-        auctionEndTime: Number(result[6] || 0),
-        startPrice: String(result[7] || '0'),
-        highestBidder: String(bidInfo[0] || ''),
-        highestBid: String(bidInfo[1] || '0'),
-        secondHighestBid: String(bidInfo[2] || '0'),
-        totalBids: Number(totalBids || 0),
-        status: Number(result[8] || 0),
-        condition: Number(result[9] || 0),
-        seller: seller
+      // 确保所有必要的数据都存在
+      if (!Array.isArray(product) || product.length < 10) {
+        throw new Error('商品数据格式不正确')
       }
 
-      console.log('处理后的商品数据:', product)
-      return product
-    } catch (error) {
-      console.error('获取商品信息失败:', error)
-      throw new Error('获取商品信息失败: ' + (error as Error).message)
+      // 格式化返回数据
+      const formattedProduct: Product = {
+        id: productId,
+        name: this.web3?.utils.hexToUtf8(String(product[1])) || '',
+        category: this.web3?.utils.hexToUtf8(String(product[2])) || '',
+        imageLink: String(product[3]) || '',
+        descLink: String(product[4]) || '',
+        auctionStartTime: Number(product[5]),
+        auctionEndTime: Number(product[6]),
+        startPrice: String(product[7]),
+        highestBidder: String(bidInfo?.[0]) || '0x0000000000000000000000000000000000000000',
+        highestBid: String(bidInfo?.[1]) || '0',
+        secondHighestBid: String(bidInfo?.[2]) || '0',
+        totalBids: Number(totalBids || 0),
+        status: Number(product[8]),
+        condition: Number(product[9]),
+        seller: String(sellerAddress)
+      }
+
+      console.log('格式化后的商品数据:', formattedProduct)
+      return formattedProduct
+    } catch (error: any) {
+      console.error('获取商品详情失败:', error)
+      throw new Error(`获取商品 ${productId} 失败: ${error.message}`)
     }
   }
 
   async getProducts(page: number, pageSize: number) {
+    await this.ensureInitialized()
+    
     if (!this.contract) {
       throw new Error('合约未初始化')
     }
@@ -345,8 +395,11 @@ class Web3Service {
       const products = []
       for (let i = start + 1; i <= end; i++) {
         try {
+          console.log('正在获取商品:', i)
           const product = await this.getProduct(i)
-          products.push(product)
+          if (product) {
+            products.push(product)
+          }
         } catch (error) {
           console.error(`获取商品 ${i} 失败:`, error)
           continue
@@ -359,7 +412,7 @@ class Web3Service {
       }
     } catch (error: any) {
       console.error('获取商品列表失败:', error)
-      throw error
+      throw new Error('获取商品列表失败: ' + error.message)
     }
   }
 

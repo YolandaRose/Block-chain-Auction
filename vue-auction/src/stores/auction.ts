@@ -140,17 +140,23 @@ export const useAuctionStore = defineStore('auction', {
     },
 
     async fetchAuctions(params: AuctionParams): Promise<void> {
+      this.loading = true
+      this.error = ''
+
       try {
-        this.loading = true
-        
-        // 使用 web3Service 获取拍卖列表
-        const result = await web3Service.getProducts(params.page, params.pageSize)
-        
-        if (!result || !Array.isArray(result.items)) {
-          throw new Error('获取拍卖列表失败：返回数据格式错误')
+        if (!web3Service) {
+          throw new Error('Web3 服务未初始化')
         }
 
-        // 过滤商品
+        // 获取商品列表
+        const result = await web3Service.getProducts(params.page, params.pageSize)
+        console.log('获取到原始数据:', result)
+
+        if (!result || !Array.isArray(result.items)) {
+          throw new Error('获取拍卖列表失败')
+        }
+
+        // 过滤和排序
         let filteredItems = [...result.items]
 
         // 按分类过滤
@@ -163,26 +169,27 @@ export const useAuctionStore = defineStore('auction', {
         // 按搜索关键词过滤
         if (params.search) {
           const searchLower = params.search.toLowerCase()
-          filteredItems = filteredItems.filter(item => 
+          filteredItems = filteredItems.filter(item =>
             item.name.toLowerCase().includes(searchLower) ||
+            item.category.toLowerCase().includes(searchLower) ||
             item.descLink.toLowerCase().includes(searchLower)
           )
         }
 
-        // 按排序方式排序
+        // 排序
         if (params.sortBy) {
           switch (params.sortBy) {
-            case 'priceAsc':
-              filteredItems.sort((a, b) => Number(a.startPrice) - Number(b.startPrice))
-              break
-            case 'priceDesc':
-              filteredItems.sort((a, b) => Number(b.startPrice) - Number(a.startPrice))
-              break
             case 'newest':
               filteredItems.sort((a, b) => b.auctionStartTime - a.auctionStartTime)
               break
-            case 'endingSoon':
+            case 'ending':
               filteredItems.sort((a, b) => a.auctionEndTime - b.auctionEndTime)
+              break
+            case 'price_asc':
+              filteredItems.sort((a, b) => Number(a.startPrice) - Number(b.startPrice))
+              break
+            case 'price_desc':
+              filteredItems.sort((a, b) => Number(b.startPrice) - Number(a.startPrice))
               break
           }
         }
@@ -196,6 +203,7 @@ export const useAuctionStore = defineStore('auction', {
           total: this.total
         })
       } catch (error: any) {
+        console.error('获取拍卖列表失败:', error)
         this.error = error.message
         throw error
       } finally {

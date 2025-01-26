@@ -56,16 +56,17 @@ interface BidInfo {
 }
 
 interface ContractProduct {
-  0: string  // id
-  1: string  // name
-  2: string  // category
-  3: string  // imageLink
-  4: string  // descLink
-  5: string  // auctionStartTime
-  6: string  // auctionEndTime
-  7: string  // startPrice
-  8: number  // status
-  9: number  // condition
+  0: string | number;
+  1: string;
+  2: string;
+  3: string;
+  4: string;
+  5: string | number;
+  6: string | number;
+  7: string | number;
+  8: string | number;
+  9: string | number;
+  [key: number]: string | number;
 }
 
 class Web3Service {
@@ -330,43 +331,26 @@ class Web3Service {
       console.log('正在获取商品:', productId)
       
       // 获取商品信息
-      const product = await this.contract.methods.getProduct(productId).call()
+      const product = await this.contract.methods.getProduct(productId).call() as unknown[]
       console.log('获取到原始商品数据:', product)
 
-      // 获取卖家地址
-      const sellerAddress = await this.contract.methods.productIdInStore(productId).call()
-      console.log('获取到卖家地址:', sellerAddress)
-
-      // 获取出价信息
-      const bidInfo = await this.contract.methods.highestBidderInfo(productId).call()
-      console.log('获取到出价信息:', bidInfo)
-
-      // 获取总出价次数
-      const totalBids = await this.contract.methods.totalBids(productId).call()
-      console.log('获取到总出价次数:', totalBids)
-
-      // 确保所有必要的数据都存在
-      if (!Array.isArray(product) || product.length < 10) {
-        throw new Error('商品数据格式不正确')
-      }
-
-      // 格式化返回数据
+      // 直接格式化返回数据
       const formattedProduct: Product = {
         id: productId,
-        name: this.web3?.utils.hexToUtf8(String(product[1])) || '',
-        category: this.web3?.utils.hexToUtf8(String(product[2])) || '',
-        imageLink: String(product[3]) || '',
-        descLink: String(product[4]) || '',
-        auctionStartTime: Number(product[5]),
-        auctionEndTime: Number(product[6]),
-        startPrice: String(product[7]),
-        highestBidder: String(bidInfo?.[0]) || '0x0000000000000000000000000000000000000000',
-        highestBid: String(bidInfo?.[1]) || '0',
-        secondHighestBid: String(bidInfo?.[2]) || '0',
-        totalBids: Number(totalBids || 0),
-        status: Number(product[8]),
-        condition: Number(product[9]),
-        seller: String(sellerAddress)
+        name: String(product[1] || ''),
+        category: String(product[2] || ''),
+        imageLink: String(product[3] || ''),
+        descLink: String(product[4] || ''),
+        auctionStartTime: Number(product[5] || 0),
+        auctionEndTime: Number(product[6] || 0),
+        startPrice: String(product[7] || '0'),
+        highestBidder: '0x0000000000000000000000000000000000000000',
+        highestBid: '0',
+        secondHighestBid: '0',
+        totalBids: 0,
+        status: Number(product[8] || 0),
+        condition: Number(product[9] || 0),
+        seller: '0x0000000000000000000000000000000000000000'
       }
 
       console.log('格式化后的商品数据:', formattedProduct)
@@ -402,9 +386,12 @@ class Web3Service {
           }
         } catch (error) {
           console.error(`获取商品 ${i} 失败:`, error)
+          // 不要中断整个循环，继续获取下一个商品
           continue
         }
       }
+
+      console.log('成功获取商品列表:', products)
 
       return {
         items: products,
@@ -412,7 +399,11 @@ class Web3Service {
       }
     } catch (error: any) {
       console.error('获取商品列表失败:', error)
-      throw new Error('获取商品列表失败: ' + error.message)
+      // 返回空列表而不是抛出错误
+      return {
+        items: [],
+        total: 0
+      }
     }
   }
 

@@ -153,7 +153,7 @@ const fetchAuctions = async () => {
 const filteredAuctions = computed(() => {
   return store.auctions.map(auction => ({
     ...auction,
-    image: auction.images?.[0] || '' // 使用可选链操作符
+    image: auction.imageLink || '' // 使用 imageLink 替代 images
   }))
 })
 
@@ -171,22 +171,35 @@ const handlePageChange = (page: number) => {
 }
 
 const formatTime = (timestamp: number): string => {
-  return dayjs(timestamp).format('YYYY-MM-DD HH:mm')
+  // 确保时间戳是毫秒级的
+  const milliseconds = timestamp * 1000
+  return new Date(milliseconds).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
 }
 
 const isEndingSoon = (endTime: number): boolean => {
-  const now = dayjs()
-  const end = dayjs(endTime)
-  return end.diff(now, 'hour') <= 24
+  const now = Math.floor(Date.now() / 1000) // 转换为秒级时间戳
+  const timeLeft = endTime - now
+  return timeLeft > 0 && timeLeft <= 24 * 3600 // 24小时内
 }
 
-const getStatusText = (status: string): string => {
-  const statusMap: Record<string, string> = {
-    active: '进行中',
-    ended: '已结束',
-    pending: '即将开始'
+const getStatusText = (status: number): string => {
+  switch (status) {
+    case 0:
+      return '拍卖中'
+    case 1:
+      return '已售出'
+    case 2:
+      return '流拍'
+    default:
+      return '未知'
   }
-  return statusMap[status] || status
 }
 
 const goToDetail = (id: number) => {

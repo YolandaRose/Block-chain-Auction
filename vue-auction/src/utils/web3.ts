@@ -2,6 +2,7 @@ import Web3 from 'web3'
 import type { Contract } from 'web3-eth-contract'
 import type { AbiItem } from 'web3-utils'
 import ecommerceStoreABI from '@/contracts/EcommerceStore.json'
+import escrowABI from '@/contracts/Escrow.json'
 
 declare global {
   interface Window {
@@ -49,24 +50,62 @@ interface StoreProduct {
 }
 
 interface BidInfo {
-  0: string;
-  1: string;
-  2: string;
-  [key: number]: string;
+  bidder: string;
+  amount: string;
 }
 
+// 合约返回的商品类型
 interface ContractProduct {
-  0: string | number;
+  name: string
+  category: string
+  imageLink: string
+  descLink: string
+  auctionStartTime: string
+  auctionEndTime: string
+  startPrice: string
+  highestBid: string
+  secondHighestBid: string
+  totalBids: string
+  status: string
+  condition: string
+  seller: string
+  highestBidder: string
+}
+
+// 合约返回的商品数组类型
+interface ProductArray extends Array<string | number> {
+  [index: number]: string | number;
+}
+
+// 合约返回的商品信息类型
+interface ProductInfo {
+  0: string;
   1: string;
   2: string;
   3: string;
   4: string;
-  5: string | number;
-  6: string | number;
-  7: string | number;
-  8: string | number;
-  9: string | number;
-  [key: number]: string | number;
+  5: string;
+  6: string;
+  7: string;
+  8: string;
+  9: string;
+  [key: number]: string;
+}
+
+// 合约返回的拍卖信息类型
+interface AuctionInfo {
+  highestBidder: string;
+  highestBid: string;
+  secondHighestBid: string;
+  totalBids: string;
+}
+
+// 添加类型定义
+interface BidderInfo {
+  0: string;  // highestBidder address
+  1: string;  // highestBid
+  2: string;  // secondHighestBid
+  [key: number]: string;
 }
 
 class Web3Service {
@@ -210,39 +249,81 @@ class Web3Service {
       // 生成随机密钥
       const secret = Web3.utils.randomHex(32)
       
+      // 将ETH金额转换为Wei
+      const amountInWei = this.web3.utils.toWei(amount, 'ether')
+      
+      // 获取当前最高价信息
+      const currentBidInfo = await this.contract.methods.highestBidderInfo(productId).call() as BidderInfo
+      console.log('当前出价信息:', {
+        currentHighestBid: this.web3.utils.fromWei(currentBidInfo[1], 'ether'),
+        currentSecondHighestBid: this.web3.utils.fromWei(currentBidInfo[2], 'ether'),
+        newBid: amount
+      })
+
+      // 检查出价是否高于当前最高价
+      if (BigInt(amountInWei) <= BigInt(currentBidInfo[1])) {
+        throw new Error(`出价必须高于当前最高价 ${this.web3.utils.fromWei(currentBidInfo[1], 'ether')} ETH`)
+      }
+      
       // 计算出价的 hash
       const bid = await this.contract.methods.keccak(
-        amount,
+        amountInWei,
         secret
       ).call()
       
       console.log('出价信息:', {
         productId,
         amount,
+        amountInWei,
         secret,
         bid
       })
 
-      // 发送出价交易
+      // 估算gas费用
       const gas = await this.contract.methods
         .bid(productId, bid)
         .estimateGas({ 
           from: account, 
-          value: this.web3.utils.toWei(amount, 'ether')
+          value: amountInWei
         })
 
+      // 确保有足够的gas费用
+      const gasPrice = await this.web3.eth.getGasPrice()
+      const gasCost = BigInt(gas) * BigInt(gasPrice)
+      const totalCost = BigInt(amountInWei) + gasCost
+      
+      // 获取账户余额
+      const balance = await this.web3.eth.getBalance(account)
+      
+      console.log('Debug 金额信息:', {
+        amountInWei,
+        gasPrice,
+        gasCost: gasCost.toString(),
+        totalCost: totalCost.toString(),
+        balance
+      })
+
+      if (BigInt(balance) < totalCost) {
+        const totalEth = this.web3.utils.fromWei(totalCost.toString(), 'ether')
+        const bidEth = this.web3.utils.fromWei(amountInWei, 'ether')
+        const gasEth = this.web3.utils.fromWei(gasCost.toString(), 'ether')
+        throw new Error(`余额不足，总共需要 ${totalEth} ETH（出价 ${bidEth} ETH + gas费用 ${gasEth} ETH）`)
+      }
+
+      // 发送出价交易
       const result = await this.contract.methods
         .bid(productId, bid)
         .send({ 
           from: account, 
-          value: this.web3.utils.toWei(amount, 'ether'),
-          gas: Math.floor(Number(gas) * 1.5).toString()
+          value: amountInWei,
+          gas: (Math.floor(Number(gas) * 1.1)).toString(), // 增加10%的gas限制
+          gasPrice: gasPrice.toString()
         })
 
       // 保存密钥信息到本地存储，用于后续揭示出价
       const bidInfo = {
         productId,
-        amount,
+        amount: amountInWei,
         secret,
         revealed: false,
         timestamp: Date.now()
@@ -268,6 +349,15 @@ class Web3Service {
     const account = await this.connectWallet()
     
     try {
+      // 获取当前最高价信息
+      const currentBidInfo = await this.contract.methods.highestBidderInfo(productId).call() as BidderInfo
+      console.log('揭示出价前的价格信息:', {
+        currentHighestBidder: currentBidInfo[0],
+        currentHighestBid: this.web3.utils.fromWei(currentBidInfo[1], 'ether'),
+        currentSecondHighestBid: this.web3.utils.fromWei(currentBidInfo[2], 'ether'),
+        revealingBid: amount
+      })
+
       console.log('揭示出价参数:', {
         productId,
         amount,
@@ -285,6 +375,14 @@ class Web3Service {
           from: account,
           gas: Math.floor(Number(gas) * 1.5).toString()
         })
+      
+      // 获取更新后的最高价信息
+      const updatedBidInfo = await this.contract.methods.highestBidderInfo(productId).call() as BidderInfo
+      console.log('揭示出价后的价格信息:', {
+        newHighestBidder: updatedBidInfo[0],
+        newHighestBid: this.web3.utils.fromWei(updatedBidInfo[1], 'ether'),
+        newSecondHighestBid: this.web3.utils.fromWei(updatedBidInfo[2], 'ether')
+      })
       
       // 更新本地存储中的揭示状态
       const bids = JSON.parse(localStorage.getItem(`bids_${productId}`) || '[]')
@@ -320,44 +418,125 @@ class Web3Service {
     }
   }
 
-  async getProduct(productId: number): Promise<Product> {
+  async getCurrentHighestBid(productId: number): Promise<{highestBidder: string, highestBid: string}> {
     await this.ensureInitialized()
 
-    if (!this.contract) {
+    if (!this.web3 || !this.contract) {
       throw new Error('合约未初始化')
     }
 
     try {
-      console.log('正在获取商品:', productId)
-      
-      // 获取商品信息
-      const product = await this.contract.methods.getProduct(productId).call() as unknown[]
-      console.log('获取到原始商品数据:', product)
+      const bidInfo = await this.contract.methods.highestBidderInfo(productId).call() as BidderInfo
+      console.log('当前最高价信息:', bidInfo)
 
-      // 直接格式化返回数据
-      const formattedProduct: Product = {
+      return {
+        highestBidder: bidInfo[0],
+        highestBid: this.web3.utils.fromWei(bidInfo[1], 'ether')
+      }
+    } catch (error) {
+      console.error('获取最高价失败:', error)
+      throw error
+    }
+  }
+
+  async getProduct(productId: number): Promise<Product> {
+    await this.ensureInitialized()
+
+    if (!this.web3 || !this.contract) {
+      throw new Error('合约未初始化')
+    }
+
+    try {
+      // 获取商品基本信息
+      const defaultAddress = '0x0000000000000000000000000000000000000000'
+      const emptyProduct: Product = {
         id: productId,
-        name: String(product[1] || ''),
-        category: String(product[2] || ''),
-        imageLink: String(product[3] || ''),
-        descLink: String(product[4] || ''),
-        auctionStartTime: Number(product[5] || 0),
-        auctionEndTime: Number(product[6] || 0),
-        startPrice: String(product[7] || '0'),
-        highestBidder: '0x0000000000000000000000000000000000000000',
+        name: '',
+        category: '',
+        imageLink: '',
+        descLink: '',
+        auctionStartTime: 0,
+        auctionEndTime: 0,
+        startPrice: '0',
+        highestBidder: defaultAddress,
         highestBid: '0',
         secondHighestBid: '0',
         totalBids: 0,
-        status: Number(product[8] || 0),
-        condition: Number(product[9] || 0),
-        seller: '0x0000000000000000000000000000000000000000'
+        status: 0,
+        condition: 0,
+        seller: defaultAddress
       }
 
-      console.log('格式化后的商品数据:', formattedProduct)
-      return formattedProduct
-    } catch (error: any) {
-      console.error('获取商品详情失败:', error)
-      throw new Error(`获取商品 ${productId} 失败: ${error.message}`)
+      // 调用合约方法获取基本信息
+      const productData = await this.contract.methods.getProduct(productId).call() as ProductInfo
+      const sellerAddress = await this.contract.methods.productIdInStore(productId).call()
+
+      if (!productData || !sellerAddress) {
+        console.warn('未找到商品数据')
+        return emptyProduct
+      }
+
+      // 获取竞拍信息
+      const bidInfo = await this.contract.methods.highestBidderInfo(productId).call() as BidderInfo
+      const totalBids = await this.contract.methods.totalBids(productId).call()
+
+      console.log('商品信息:', {
+        productData,
+        sellerAddress,
+        bidInfo,
+        totalBids
+      })
+
+      // 确保地址是字符串类型
+      const seller = String(sellerAddress).toLowerCase()
+      const highestBidder = bidInfo[0] ? String(bidInfo[0]).toLowerCase() : defaultAddress
+
+      // 转换价格从Wei到ETH，处理可能的无效输入
+      const formatWeiToEth = (wei: string | number | null | undefined): string => {
+        try {
+          if (!wei || wei === '0' || wei === 0) return '0'
+          // 确保输入是字符串
+          const weiStr = wei.toString()
+          return this.web3!.utils.fromWei(weiStr, 'ether')
+        } catch (error) {
+          console.error('Wei转ETH失败:', error, '输入值:', wei)
+          return '0'
+        }
+      }
+
+      // 处理价格信息
+      const startPrice = productData[7] // 直接使用合约返回的起拍价
+      const highestBid = formatWeiToEth(bidInfo[1])  // 从bidInfo获取最高价
+      const secondHighestBid = formatWeiToEth(bidInfo[2])  // 从bidInfo获取次高价
+
+      console.log('价格信息:', {
+        起拍价: startPrice,
+        最高价Wei: bidInfo[1],
+        最高价ETH: highestBid,
+        次高价Wei: bidInfo[2],
+        次高价ETH: secondHighestBid
+      })
+
+      return {
+        ...emptyProduct,
+        name: productData[1] || '',
+        category: productData[2] || '',
+        imageLink: productData[3] || '',
+        descLink: productData[4] || '',
+        auctionStartTime: Number(productData[5]) || 0,
+        auctionEndTime: Number(productData[6]) || 0,
+        startPrice: startPrice,  // 使用原始起拍价
+        status: Number(productData[8]) || 0,
+        condition: Number(productData[9]) || 0,
+        seller,
+        highestBidder,
+        highestBid,
+        secondHighestBid,
+        totalBids: Number(totalBids) || 0
+      }
+    } catch (error) {
+      console.error('获取商品信息失败:', error)
+      throw error
     }
   }
 
@@ -458,88 +637,96 @@ class Web3Service {
     return condition === 0 ? 'New' : 'Used'
   }
 
-  // 查询托管合约信息
+  // 获取Escrow合约实例
+  async getEscrowContract(escrowAddress: string): Promise<Contract<typeof escrowABI.abi>> {
+    if (!this.web3) {
+      throw new Error('Web3未初始化')
+    }
+
+    return new this.web3.eth.Contract(
+      escrowABI.abi as AbiItem[],
+      escrowAddress
+    )
+  }
+
+  // 获取Escrow合约信息
   async getEscrowInfo(productId: number): Promise<EscrowInfo> {
+    await this.ensureInitialized()
+    
+    if (!this.contract) {
+      throw new Error('合约未初始化')
+    }
+
     try {
-      if (!this.contract) {
-        throw new Error('Contract not initialized');
+      // 获取托管合约地址
+      const escrowAddress = await this.contract.methods
+        .escrowAddressForProduct(productId)
+        .call() as string
+
+      if (!escrowAddress || escrowAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('托管合约不存在')
       }
 
-      const escrowAddress = await this.contract.methods.escrowAddressForProduct(productId).call();
-      if (!escrowAddress) {
-        throw new Error('托管合约不存在');
-      }
-
-      const result = await this.contract.methods.escrowInfo(productId).call() as [string, string, string, boolean, string, string];
-
+      // 获取托管合约实例
+      const escrowContract = await this.getEscrowContract(escrowAddress)
+      
+      // 获取托管信息
+      const info: [string, string, string, boolean, string, string] = await escrowContract.methods.escrowInfo().call()
+      
       return {
-        buyer: result[0],
-        seller: result[1],
-        arbiter: result[2], 
-        fundsDisbursed: result[3],
-        releaseCount: parseInt(result[4]),
-        refundCount: parseInt(result[5])
-      };
+        buyer: info[0],
+        seller: info[1],
+        arbiter: info[2],
+        fundsDisbursed: info[3],
+        releaseCount: Number(info[4]),
+        refundCount: Number(info[5])
+      }
     } catch (error) {
-      console.error('获取托管信息失败:', error);
-      throw new Error('获取托管信息失败: ' + error);
+      console.error('获取托管信息失败:', error)
+      throw error
     }
   }
 
   // 释放资金给卖家
-  async releaseAmountToSeller(productId: number): Promise<any> {
-    try {
-      if (!this.contract || !this.account) {
-        throw new Error('Contract not initialized or account not connected');
-      }
-
-      const escrowAddress = await this.contract.methods.escrowAddressForProduct(productId).call();
-      if (!escrowAddress) {
-        throw new Error('托管合约不存在');
-      }
-
-      const gas = await this.contract.methods.releaseAmountToSeller(this.account).estimateGas({
-        from: this.account
-      });
-
-      const result = await this.contract.methods.releaseAmountToSeller(this.account).send({
-        from: this.account,
-        gas: (Math.floor(Number(gas) * 1.5)).toString()
-      });
-
-      return result;
-    } catch (error) {
-      console.error('释放资金失败:', error);
-      throw new Error('释放资金失败: ' + error);
+  async releaseAmountToSeller(productId: number): Promise<void> {
+    await this.ensureInitialized()
+    const account = await this.connectWallet()
+    
+    if (!this.contract) {
+      throw new Error('合约未初始化')
     }
+
+    const escrowAddress = await this.contract.methods
+      .escrowAddressForProduct(productId)
+      .call() as string
+
+    if (!escrowAddress || escrowAddress === '0x0000000000000000000000000000000000000000') {
+      throw new Error('托管合约不存在')
+    }
+
+    const escrowContract = await this.getEscrowContract(escrowAddress)
+    await escrowContract.methods.releaseAmountToSeller(account).send({ from: account })
   }
 
-  // 退还资金给买家
-  async refundAmountToBuyer(productId: number): Promise<any> {
-    try {
-      if (!this.contract || !this.account) {
-        throw new Error('Contract not initialized or account not connected');
-      }
-
-      const escrowAddress = await this.contract.methods.escrowAddressForProduct(productId).call();
-      if (!escrowAddress) {
-        throw new Error('托管合约不存在');
-      }
-
-      const gas = await this.contract.methods.refundAmountToBuyer(this.account).estimateGas({
-        from: this.account
-      });
-
-      const result = await this.contract.methods.refundAmountToBuyer(this.account).send({
-        from: this.account,
-        gas: (Math.floor(Number(gas) * 1.5)).toString()
-      });
-
-      return result;
-    } catch (error) {
-      console.error('退还资金失败:', error);
-      throw new Error('退还资金失败: ' + error);
+  // 退款给买家
+  async refundAmountToBuyer(productId: number): Promise<void> {
+    await this.ensureInitialized()
+    const account = await this.connectWallet()
+    
+    if (!this.contract) {
+      throw new Error('合约未初始化')
     }
+
+    const escrowAddress = await this.contract.methods
+      .escrowAddressForProduct(productId)
+      .call() as string
+
+    if (!escrowAddress || escrowAddress === '0x0000000000000000000000000000000000000000') {
+      throw new Error('托管合约不存在')
+    }
+
+    const escrowContract = await this.getEscrowContract(escrowAddress)
+    await escrowContract.methods.refundAmountToBuyer(account).send({ from: account })
   }
 
   async addProductToStore(
@@ -569,6 +756,12 @@ class Web3Service {
 
       if (auctionEndTime <= auctionStartTime) {
         throw new Error('结束时间必须大于开始时间')
+      }
+
+      // 验证时间戳（确保是秒级时间戳）
+      const now = Math.floor(Date.now() / 1000)
+      if (auctionStartTime < now) {
+        throw new Error('开始时间不能早于当前时间')
       }
 
       if (!startPrice || isNaN(Number(startPrice)) || Number(startPrice) <= 0) {

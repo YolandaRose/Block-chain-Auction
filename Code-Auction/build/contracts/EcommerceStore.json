@@ -26743,12 +26743,12 @@
     "5777": {
       "events": {},
       "links": {},
-      "address": "0xd228F632D2e950F2DABe4fECbcfa5B8457831Fc3",
-      "transactionHash": "0x4291cc73b5638ac2106045db64633b664e86d2afce6b395702c9651f47096086"
+      "address": "0x218EABA8EC6a7Cf1e71d375aE393EDD1CB815C29",
+      "transactionHash": "0x05519486ff59106b284d62c27cbf0f50bdc49f99e969314e301c460c5f6bf3e1"
     }
   },
   "schemaVersion": "3.4.16",
-  "updatedAt": "2025-01-24T06:58:17.038Z",
+  "updatedAt": "2025-02-05T00:47:37.200Z",
   "networkType": "ethereum",
   "devdoc": {
     "kind": "dev",

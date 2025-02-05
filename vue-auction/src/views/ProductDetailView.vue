@@ -50,8 +50,14 @@
                 {{ getConditionText(product.condition) }}
               </el-descriptions-item>
               <el-descriptions-item label="卖家">
-                <el-tooltip :content="product.seller" placement="top">
-                  <span class="address">{{ formatAddress(product.seller) }}</span>
+                <el-tooltip 
+                  :content="product.seller" 
+                  placement="top"
+                  effect="dark"
+                >
+                  <el-tag size="small" type="info">
+                    {{ formatAddress(product.seller) }}
+                  </el-tag>
                 </el-tooltip>
               </el-descriptions-item>
             </el-descriptions>
@@ -89,8 +95,14 @@
               <div class="detail-item">
                 <el-icon><User /></el-icon>
                 <span class="label">最高出价者：</span>
-                <el-tooltip :content="product.highestBidder" placement="top">
-                  <span class="address">{{ formatAddress(product.highestBidder) }}</span>
+                <el-tooltip 
+                  :content="product.highestBidder" 
+                  placement="top"
+                  effect="dark"
+                >
+                  <el-tag size="small" :type="product.highestBidder === '0x0000000000000000000000000000000000000000' ? 'info' : 'success'">
+                    {{ formatAddress(product.highestBidder) }}
+                  </el-tag>
                 </el-tooltip>
               </div>
               <div class="detail-item">
@@ -103,9 +115,34 @@
             <el-divider />
 
             <div class="action-section" v-if="product.status === 0">
-              <el-button type="primary" size="large" @click="placeBid">
+              <el-button type="primary" size="large" @click="showBidDialog">
                 立即出价
               </el-button>
+            </div>
+
+            <!-- 托管状态显示 -->
+            <div class="escrow-section" v-if="product.status === 1">
+              <h3>托管状态</h3>
+              <el-descriptions :column="1" border>
+                <el-descriptions-item label="托管状态">
+                  {{ escrowInfo.fundsDisbursed ? '已完成' : '进行中' }}
+                </el-descriptions-item>
+                <el-descriptions-item label="同意释放">
+                  {{ escrowInfo.releaseCount }}/2
+                </el-descriptions-item>
+                <el-descriptions-item label="同意退款">
+                  {{ escrowInfo.refundCount }}/2
+                </el-descriptions-item>
+              </el-descriptions>
+              
+              <div class="escrow-actions" v-if="!escrowInfo.fundsDisbursed">
+                <el-button type="success" @click="handleEscrowAction('release')">
+                  同意释放资金
+                </el-button>
+                <el-button type="warning" @click="handleEscrowAction('refund')">
+                  申请退款
+                </el-button>
+              </div>
             </div>
           </div>
 
@@ -113,9 +150,46 @@
             <h2>商品描述</h2>
             <p>{{ product.descLink }}</p>
           </div>
+
+          <!-- 添加竞拍历史组件 -->
+          <BidHistory
+            v-if="product"
+            :product-id="product.id"
+            :current-highest-bidder="product.highestBidder"
+          />
         </div>
       </div>
     </div>
+
+    <!-- 添加竞拍对话框 -->
+    <el-dialog
+      v-model="bidDialogVisible"
+      title="参与竞拍"
+      width="30%"
+    >
+      <el-form :model="bidForm" label-width="100px">
+        <el-form-item label="当前最高价">
+          <div>{{ formatPrice(product?.highestBid || '0') }} ETH</div>
+        </el-form-item>
+        <el-form-item label="出价金额">
+          <el-input-number
+            v-model="bidForm.amount"
+            :min="getMinBidAmount()"
+            :precision="4"
+            :step="0.01"
+          />
+          <span class="unit">ETH</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="bidDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="submitBid" :loading="bidding">
+            确认出价
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -126,12 +200,27 @@ import { web3Service } from '@/utils/web3'
 import type { Product } from '@/utils/web3'
 import Web3 from 'web3'
 import { Picture, Timer, User, Collection } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import BidHistory from '@/components/BidHistory.vue'
 
 const route = useRoute()
 const product = ref<Product | null>(null)
 const loading = ref(true)
 const error = ref('')
+
+// 竞拍相关状态
+const bidDialogVisible = ref(false)
+const bidding = ref(false)
+const bidForm = ref({
+  amount: 0
+})
+
+// 托管相关状态
+const escrowInfo = ref({
+  fundsDisbursed: false,
+  releaseCount: 0,
+  refundCount: 0
+})
 
 // 获取状态样式
 const getStatusType = (status: number) => {
@@ -178,8 +267,8 @@ const formatPrice = (price: string) => {
 
 // 格式化地址
 const formatAddress = (address: string) => {
-  if (!address) return '无'
-  return address.slice(0, 6) + '...' + address.slice(-4)
+  if (!address || address === '0x0000000000000000000000000000000000000000') return '无'
+  return `${address.slice(0, 6)}...${address.slice(-4)}`
 }
 
 // 格式化时间
@@ -187,9 +276,98 @@ const formatTime = (timestamp: number) => {
   return new Date(timestamp * 1000).toLocaleString()
 }
 
-// 出价功能
-const placeBid = async () => {
-  ElMessage.info('出价功能开发中...')
+// 显示竞拍对话框
+const showBidDialog = () => {
+  bidForm.value.amount = getMinBidAmount()
+  bidDialogVisible.value = true
+}
+
+// 获取最小出价金额
+const getMinBidAmount = () => {
+  if (!product.value) return 0
+  const currentBid = Web3.utils.fromWei(product.value.highestBid, 'ether')
+  return Number(currentBid) + 0.01
+}
+
+// 提交出价
+const submitBid = async () => {
+  try {
+    bidding.value = true
+    
+    if (!product.value) {
+      throw new Error('商品信息不存在')
+    }
+
+    // 验证出价金额
+    if (!bidForm.value.amount || bidForm.value.amount <= 0) {
+      throw new Error('请输入有效的出价金额')
+    }
+
+    const minBidAmount = getMinBidAmount()
+    if (bidForm.value.amount < minBidAmount) {
+      throw new Error(`出价必须大于 ${minBidAmount} ETH`)
+    }
+
+    // 将ETH转换为字符串，避免精度问题
+    const amountStr = bidForm.value.amount.toString()
+    console.log('出价金额:', amountStr, 'ETH')
+
+    // 调用合约方法
+    const result = await web3Service.placeBid(
+      Number(product.value.id),
+      amountStr
+    )
+
+    ElMessage.success('出价成功！交易哈希: ' + result)
+    bidDialogVisible.value = false
+    
+    // 重新加载商品信息
+    await loadProduct()
+  } catch (err: any) {
+    console.error('出价失败:', err)
+    ElMessage.error(err.message || '出价失败，请重试')
+  } finally {
+    bidding.value = false
+  }
+}
+
+// 处理托管操作
+const handleEscrowAction = async (action: 'release' | 'refund') => {
+  try {
+    if (!product.value || !web3Service) return
+    
+    const actionText = action === 'release' ? '释放资金' : '申请退款'
+    await ElMessageBox.confirm(
+      `确定要${actionText}吗？`,
+      '确认操作',
+      { type: 'warning' }
+    )
+    
+    if (action === 'release') {
+      await web3Service.releaseAmountToSeller(product.value.id)
+    } else {
+      await web3Service.refundAmountToBuyer(product.value.id)
+    }
+    
+    ElMessage.success(`${actionText}操作已提交`)
+    await loadEscrowInfo()
+  } catch (err: any) {
+    if (err !== 'cancel') {
+      ElMessage.error(err.message || '操作失败')
+    }
+  }
+}
+
+// 加载托管信息
+const loadEscrowInfo = async () => {
+  if (!product.value || !web3Service || product.value.status !== 1) return
+  
+  try {
+    const info = await web3Service.getEscrowInfo(product.value.id)
+    escrowInfo.value = info
+  } catch (err) {
+    console.error('加载托管信息失败:', err)
+  }
 }
 
 // 加载商品信息
@@ -213,6 +391,9 @@ const loadProduct = async (retryCount = 0) => {
       throw new Error('商品不存在')
     }
 
+    // 确保所有地址都是有效的以太坊地址
+    const defaultAddress = '0x0000000000000000000000000000000000000000'
+    
     product.value = {
       ...data,
       name: data.name || '未命名商品',
@@ -225,16 +406,28 @@ const loadProduct = async (retryCount = 0) => {
       totalBids: data.totalBids || 0,
       status: data.status || 0,
       condition: data.condition || 0,
-      seller: data.seller || '0x0000000000000000000000000000000000000000'
+      seller: data.seller || defaultAddress,
+      highestBidder: data.highestBidder || defaultAddress
+    }
+
+    console.log('商品信息:', {
+      ...product.value,
+      sellerFormatted: formatAddress(product.value.seller),
+      highestBidderFormatted: formatAddress(product.value.highestBidder)
+    })
+
+    // 如果是已售出状态，加载托管信息
+    if (product.value.status === 1) {
+      await loadEscrowInfo()
     }
   } catch (err: any) {
-    console.error('加载商品失败:', err)
-    if (retryCount < maxRetries) {
-      await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)))
-      return loadProduct(retryCount + 1)
+    console.error('加载商品信息失败:', err)
+    error.value = err.message || '加载失败'
+    
+    // 如果是网络错误，尝试重试
+    if (retryCount < maxRetries && err.message.includes('network')) {
+      setTimeout(() => loadProduct(retryCount + 1), 1000 * (retryCount + 1))
     }
-    error.value = err.message || '加载商品失败'
-    product.value = null
   } finally {
     loading.value = false
   }
@@ -392,6 +585,30 @@ h2 {
 .description-section p {
   color: var(--el-text-color-regular);
   line-height: 1.6;
+}
+
+.escrow-section {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+}
+
+.escrow-actions {
+  margin-top: 20px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.unit {
+  margin-left: 8px;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 @media (max-width: 768px) {

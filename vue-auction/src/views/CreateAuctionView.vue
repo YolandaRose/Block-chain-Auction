@@ -37,11 +37,12 @@
 
         <el-form-item label="拍卖时长" prop="duration">
           <el-select v-model="form.duration" placeholder="请选择拍卖持续时间">
+            <el-option label="1小时" :value="1" />
+            <el-option label="6小时" :value="6" />
+            <el-option label="12小时" :value="12" />
             <el-option label="1天" :value="24" />
             <el-option label="3天" :value="72" />
             <el-option label="7天" :value="168" />
-            <el-option label="14天" :value="336" />
-            <el-option label="30天" :value="720" />
           </el-select>
         </el-form-item>
 
@@ -123,7 +124,7 @@ const form = ref({
   name: '',
   description: '',
   startPrice: 0.1,
-  duration: 168, // 默认7天
+  duration: 24, // 默认1天
   category: '',
   condition: 0, // 默认全新
   images: [] as string[]
@@ -233,10 +234,17 @@ const handleSubmit = async () => {
     await formRef.value.validate()
     submitting.value = true
     
-    // 计算拍卖开始和结束时间
-    const now = Math.floor(Date.now() / 1000)
+    // 计算拍卖开始和结束时间（使用秒级时间戳）
+    const now = Math.floor(Date.now() / 1000) // 转换为秒级时间戳
     const auctionStartTime = now
-    const auctionEndTime = now + Number(form.value.duration) * 24 * 60 * 60
+    const auctionEndTime = now + (form.value.duration * 3600) // 小时转换为秒
+    
+    console.log('拍卖时间:', {
+      now: new Date(now * 1000).toLocaleString(),
+      start: new Date(auctionStartTime * 1000).toLocaleString(),
+      end: new Date(auctionEndTime * 1000).toLocaleString(),
+      duration: `${form.value.duration}小时`
+    })
     
     // 确保所有字符串参数都经过 trim 处理
     const name = form.value.name?.trim() || ''

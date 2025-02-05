@@ -37,6 +37,10 @@
 
         <el-form-item label="拍卖时长" prop="duration">
           <el-select v-model="form.duration" placeholder="请选择拍卖持续时间">
+            <el-option label="1分钟" :value="1/60" />
+            <el-option label="5分钟" :value="5/60" />
+            <el-option label="10分钟" :value="10/60" />
+            <el-option label="30分钟" :value="0.5" />
             <el-option label="1小时" :value="1" />
             <el-option label="6小时" :value="6" />
             <el-option label="12小时" :value="12" />
@@ -111,6 +115,7 @@ import { useAuctionStore } from '@/stores/auction'
 import { ElMessage, type FormInstance, type UploadFile, ElLoading } from 'element-plus'
 import type { UploadUserFile } from 'element-plus'
 import { ipfsService } from '../utils/ipfs'
+import Web3 from 'web3'
 
 const router = useRouter()
 const store = useAuctionStore()
@@ -124,7 +129,7 @@ const form = ref({
   name: '',
   description: '',
   startPrice: 0.1,
-  duration: 24, // 默认1天
+  duration: 1, // 默认1小时
   category: '',
   condition: 0, // 默认全新
   images: [] as string[]
@@ -144,16 +149,14 @@ const rules = {
     { type: 'number', min: 0.001, message: '价格必须大于0.001 ETH', trigger: 'blur' }
   ],
   duration: [
-    { required: true, message: '请选择拍卖时长', trigger: 'change' }
+    { required: true, message: '请选择拍卖时长', trigger: 'change' },
+    { type: 'number', min: 1/60, message: '拍卖时长最短为1分钟', trigger: 'change' }
   ],
   category: [
     { required: true, message: '请选择商品分类', trigger: 'change' }
   ],
   condition: [
     { required: true, message: '请选择商品状况', trigger: 'change' }
-  ],
-  images: [
-    { type: 'array', max: 5, message: '最多上传5张商品图片', trigger: 'change' }
   ]
 }
 
@@ -235,9 +238,9 @@ const handleSubmit = async () => {
     submitting.value = true
     
     // 计算拍卖开始和结束时间（使用秒级时间戳）
-    const now = Math.floor(Date.now() / 1000) // 转换为秒级时间戳
+    const now = Math.floor(Date.now() / 1000)
     const auctionStartTime = now
-    const auctionEndTime = now + (form.value.duration * 3600) // 小时转换为秒
+    const auctionEndTime = now + (form.value.duration * 3600)
     
     console.log('拍卖时间:', {
       now: new Date(now * 1000).toLocaleString(),
@@ -266,6 +269,13 @@ const handleSubmit = async () => {
     if (isNaN(Number(form.value.startPrice)) || Number(form.value.startPrice) <= 0) {
       throw new Error('起拍价必须大于0')
     }
+
+    // 将ETH转换为Wei
+    const startPriceInWei = Web3.utils.toWei(form.value.startPrice.toString(), 'ether')
+    console.log('起拍价:', {
+      eth: form.value.startPrice,
+      wei: startPriceInWei
+    })
     
     const params = {
       name,
@@ -274,7 +284,7 @@ const handleSubmit = async () => {
       descLink: description,
       auctionStartTime,
       auctionEndTime,
-      startPrice: form.value.startPrice.toString(),
+      startPrice: startPriceInWei,  // 使用转换后的Wei值
       condition: form.value.condition
     }
     

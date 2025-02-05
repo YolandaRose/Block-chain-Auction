@@ -71,7 +71,7 @@
             <div class="price-info">
               <div class="price-item">
                 <div class="label">起拍价</div>
-                <div class="value">{{ formatPrice(product.startPrice) }} ETH</div>
+                <div class="value">{{ product.startPrice }}.0000 ETH</div>
               </div>
               <div class="price-item highlight">
                 <div class="label">当前最高价</div>
@@ -91,6 +91,13 @@
                 <el-icon><Timer /></el-icon>
                 <span class="label">结束时间：</span>
                 <span>{{ formatTime(product.auctionEndTime) }}</span>
+              </div>
+              <div class="detail-item countdown" v-if="product.status === 0">
+                <el-icon><Timer /></el-icon>
+                <span class="label">倒计时：</span>
+                <span :class="countdownClass">
+                  {{ countdown }}
+                </span>
               </div>
               <div class="detail-item">
                 <el-icon><User /></el-icon>
@@ -115,8 +122,16 @@
             <el-divider />
 
             <div class="action-section" v-if="product.status === 0">
-              <el-button type="primary" size="large" @click="showBidDialog">
+              <el-button type="primary" size="large" @click="showBidDialog" :disabled="canFinalizeAuction">
                 立即出价
+              </el-button>
+              <el-button 
+                v-if="canFinalizeAuction"
+                type="warning" 
+                size="large" 
+                @click="handleFinalizeAuction"
+              >
+                结束拍卖
               </el-button>
             </div>
 
@@ -194,7 +209,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { web3Service } from '@/utils/web3'
 import type { Product } from '@/utils/web3'
@@ -207,6 +222,7 @@ const route = useRoute()
 const product = ref<Product | null>(null)
 const loading = ref(true)
 const error = ref('')
+const canFinalizeAuction = ref(false)
 
 // 竞拍相关状态
 const bidDialogVisible = ref(false)
@@ -222,14 +238,63 @@ const escrowInfo = ref({
   refundCount: 0
 })
 
+// 添加倒计时状态
+const countdown = ref('')
+const countdownTimer = ref<number | null>(null)
+
+// 添加标记，记录是否已尝试结束拍卖
+const hasTriedFinalize = ref(false)
+
+// 检查是否即将结束（24小时内）
+const isEndingSoon = (endTime: number): boolean => {
+  const now = Math.floor(Date.now() / 1000)
+  const timeLeft = endTime - now
+  return timeLeft > 0 && timeLeft <= 24 * 3600 // 24小时内
+}
+
+// 计算倒计时样式
+const countdownClass = computed(() => {
+  if (!product.value?.auctionEndTime) return {}
+  return {
+    'ending-soon': isEndingSoon(product.value.auctionEndTime)
+  }
+})
+
+// 检查拍卖是否可以结束
+const checkCanFinalizeAuction = async () => {
+  if (!product.value) {
+    canFinalizeAuction.value = false
+    return
+  }
+  
+  try {
+    const account = await web3Service.connectWallet()
+    if (!account) {
+      canFinalizeAuction.value = false
+      return
+    }
+
+    const now = Math.floor(Date.now() / 1000)
+    const isTimeUp = now > product.value.auctionEndTime
+    const isOpen = product.value.status === 0
+    const isNotHighestBidder = product.value.highestBidder.toLowerCase() !== account.toLowerCase()
+    const isNotSeller = product.value.seller.toLowerCase() !== account.toLowerCase()
+
+    canFinalizeAuction.value = isTimeUp && isOpen && isNotHighestBidder && isNotSeller
+  } catch (err) {
+    console.error('检查拍卖状态失败:', err)
+    canFinalizeAuction.value = false
+  }
+}
+
 // 获取状态样式
 const getStatusType = (status: number) => {
   switch (status) {
-    case 0:
+    case 0: // 拍卖中
       return 'success'
-    case 1:
-      return 'info'
-    case 2:
+    case 1: // 已售出
+      return 'warning'
+    case 2: // 流拍
       return 'danger'
     default:
       return 'info'
@@ -238,9 +303,11 @@ const getStatusType = (status: number) => {
 
 // 格式化状态文本
 const getStatusText = (status: number) => {
+  const now = Math.floor(Date.now() / 1000)
+  
   switch (status) {
     case 0:
-      return '拍卖中'
+      return product.value && now > product.value.auctionEndTime ? '已结束' : '拍卖中'
     case 1:
       return '已售出'
     case 2:
@@ -256,12 +323,18 @@ const getConditionText = (condition: number) => {
 }
 
 // 格式化价格
-const formatPrice = (price: string) => {
+const formatPrice = (price: string | number) => {
   try {
-    return Web3.utils.fromWei(price, 'ether')
+    // 如果输入是数字n（例如1n），直接返回对应的ETH值
+    if (typeof price === 'number') {
+      return price.toString() + '.0000'
+    }
+    // 否则按Wei转换为ETH
+    const ethValue = Web3.utils.fromWei(price, 'ether')
+    return Number(ethValue).toFixed(4)
   } catch {
     console.error('价格格式化失败:', price)
-    return '0'
+    return '0.0000'
   }
 }
 
@@ -285,8 +358,18 @@ const showBidDialog = () => {
 // 获取最小出价金额
 const getMinBidAmount = () => {
   if (!product.value) return 0
-  const currentBid = Web3.utils.fromWei(product.value.highestBid, 'ether')
-  return Number(currentBid) + 0.01
+  
+  // 获取起拍价和当前最高价
+  const startPrice = Number(product.value.startPrice) // 直接使用数字值
+  const currentBid = Number(formatPrice(product.value.highestBid))
+  
+  // 如果没有人出价，返回起拍价
+  if (currentBid === 0) {
+    return startPrice
+  }
+  
+  // 如果已有出价，返回当前最高价加0.01 ETH，但不能低于起拍价
+  return Math.max(startPrice, currentBid + 0.01)
 }
 
 // 提交出价
@@ -303,19 +386,27 @@ const submitBid = async () => {
       throw new Error('请输入有效的出价金额')
     }
 
+    const startPrice = Number(formatPrice(product.value.startPrice))
     const minBidAmount = getMinBidAmount()
+
+    // 检查是否低于起拍价
+    if (bidForm.value.amount < startPrice) {
+      throw new Error(`出价不能低于起拍价 ${startPrice} ETH`)
+    }
+
+    // 检查是否满足最小加价要求
     if (bidForm.value.amount < minBidAmount) {
       throw new Error(`出价必须大于 ${minBidAmount} ETH`)
     }
 
-    // 将ETH转换为字符串，避免精度问题
-    const amountStr = bidForm.value.amount.toString()
-    console.log('出价金额:', amountStr, 'ETH')
+    // 将ETH转换为Wei
+    const amountInWei = Web3.utils.toWei(bidForm.value.amount.toString(), 'ether')
+    console.log('出价金额:', bidForm.value.amount, 'ETH (', amountInWei, 'Wei)')
 
     // 调用合约方法
     const result = await web3Service.placeBid(
       Number(product.value.id),
-      amountStr
+      amountInWei
     )
 
     ElMessage.success('出价成功！交易哈希: ' + result)
@@ -370,6 +461,145 @@ const loadEscrowInfo = async () => {
   }
 }
 
+// 结束拍卖
+const handleFinalizeAuction = async () => {
+  try {
+    if (!product.value) return
+
+    const account = await web3Service.connectWallet()
+    if (!account) {
+      throw new Error('请先连接钱包')
+    }
+
+    // 检查是否是最高出价者
+    if (product.value.highestBidder.toLowerCase() === account.toLowerCase()) {
+      throw new Error('最高出价者不能结束拍卖')
+    }
+
+    // 检查是否是卖家
+    if (product.value.seller.toLowerCase() === account.toLowerCase()) {
+      throw new Error('卖家不能结束拍卖')
+    }
+    
+    await ElMessageBox.confirm(
+      '确定要结束此次拍卖吗？\n注意：只有非卖家和非最高出价者的第三方可以结束拍卖。',
+      '确认操作',
+      { type: 'warning' }
+    )
+    
+    const txHash = await web3Service.finalizeAuction(product.value.id)
+    ElMessage.success(`拍卖结束成功！交易哈希: ${txHash}`)
+    await loadProduct()
+  } catch (err: any) {
+    if (err !== 'cancel') {
+      ElMessage.error(err.message || '结束拍卖失败')
+    }
+  }
+}
+
+// 更新倒计时显示
+const updateCountdown = () => {
+  if (!product.value) return
+  
+  const now = Math.floor(Date.now() / 1000)
+  const endTime = product.value.auctionEndTime
+  const timeLeft = endTime - now
+
+  if (timeLeft <= 0) {
+    countdown.value = '拍卖已结束'
+    // 只有在状态为0（拍卖中）且未尝试过结束拍卖时才尝试
+    if (product.value.status === 0 && !hasTriedFinalize.value) {
+      hasTriedFinalize.value = true
+      autoFinalizeAuction()
+    } else {
+      // 如果状态不是0或已经尝试过，停止倒计时
+      stopCountdown()
+    }
+    return
+  }
+
+  const days = Math.floor(timeLeft / (24 * 60 * 60))
+  const hours = Math.floor((timeLeft % (24 * 60 * 60)) / (60 * 60))
+  const minutes = Math.floor((timeLeft % (60 * 60)) / 60)
+  const seconds = timeLeft % 60
+
+  countdown.value = `${days}天 ${hours}小时 ${minutes}分钟 ${seconds}秒`
+}
+
+// 自动结束拍卖
+const autoFinalizeAuction = async () => {
+  try {
+    if (!product.value || product.value.status !== 0) {
+      stopCountdown()
+      return
+    }
+
+    console.log('尝试自动结束拍卖...')
+    
+    // 获取当前账号
+    const account = await web3Service.connectWallet()
+    if (!account) {
+      throw new Error('未连接钱包')
+    }
+
+    // 检查是否是最高出价者或卖家
+    const isHighestBidder = product.value.highestBidder.toLowerCase() === account.toLowerCase()
+    const isSeller = product.value.seller.toLowerCase() === account.toLowerCase()
+    
+    if (isHighestBidder || isSeller) {
+      console.log('当前账号是最高出价者或卖家，等待其他账号结束拍卖...')
+      stopCountdown() // 停止倒计时，不再尝试
+      return
+    }
+
+    const txHash = await web3Service.finalizeAuction(product.value.id)
+    console.log('拍卖结束成功，交易哈希:', txHash)
+    
+    // 重新加载商品信息
+    await loadProduct()
+    
+    // 显示结果通知
+    if (product.value.highestBidder === '0x0000000000000000000000000000000000000000') {
+      ElMessage.info('拍卖已结束，无人出价，商品流拍')
+    } else {
+      ElMessage.success('拍卖已结束，已创建托管合约')
+    }
+
+    // 拍卖已结束，停止倒计时
+    stopCountdown()
+  } catch (err: any) {
+    console.error('自动结束拍卖失败:', err)
+    // 如果是因为用户身份问题（最高出价者或卖家），直接停止尝试
+    if (err.message.includes('最高出价者') || err.message.includes('卖家')) {
+      console.log('因用户身份限制无法结束拍卖，停止尝试')
+      stopCountdown()
+      return
+    }
+    // 如果是其他错误，1分钟后重试一次
+    setTimeout(() => {
+      if (product.value?.status === 0 && !hasTriedFinalize.value) {
+        autoFinalizeAuction()
+      } else {
+        stopCountdown()
+      }
+    }, 60000)
+  }
+}
+
+// 启动倒计时
+const startCountdown = () => {
+  updateCountdown()
+  countdownTimer.value = window.setInterval(updateCountdown, 1000)
+}
+
+// 停止倒计时
+const stopCountdown = () => {
+  if (countdownTimer.value) {
+    clearInterval(countdownTimer.value)
+    countdownTimer.value = null
+  }
+}
+
 // 加载商品信息
 const loadProduct = async (retryCount = 0) => {
   const maxRetries = 3
@@ -410,10 +640,14 @@ const loadProduct = async (retryCount = 0) => {
       highestBidder: data.highestBidder || defaultAddress
     }
 
+    // 检查是否可以结束拍卖
+    await checkCanFinalizeAuction()
+
     console.log('商品信息:', {
       ...product.value,
       sellerFormatted: formatAddress(product.value.seller),
-      highestBidderFormatted: formatAddress(product.value.highestBidder)
+      highestBidderFormatted: formatAddress(product.value.highestBidder),
+      canFinalizeAuction: canFinalizeAuction.value
     })
 
     // 如果是已售出状态，加载托管信息
@@ -433,8 +667,14 @@ const loadProduct = async (retryCount = 0) => {
   }
 }
 
+// 在组件挂载时启动倒计时，卸载时清除
 onMounted(() => {
   loadProduct()
+  startCountdown()
+})
+
+onUnmounted(() => {
+  stopCountdown()
 })
 </script>
 
@@ -578,7 +818,7 @@ h2 {
 
 .action-section {
   display: flex;
-  justify-content: center;
+  gap: 16px;
   margin-top: 20px;
 }
 
@@ -624,6 +864,21 @@ h2 {
 
   .price-info {
     grid-template-columns: 1fr;
+  }
+}
+
+.countdown {
+  font-weight: bold;
+}
+
+.ending-soon {
+  color: var(--el-color-danger);
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.5;
   }
 }
 </style> 

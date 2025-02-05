@@ -49,15 +49,21 @@
                   </div>
                 </template>
               </el-image>
-              <div class="auction-status" :class="auction.status">
-                {{ getStatusText(auction.status) }}
+              <div class="auction-status">
+                <el-tag :type="getStatusTag(auction).type" size="small">
+                  {{ getStatusTag(auction).text }}
+                </el-tag>
               </div>
             </div>
             <div class="auction-info">
               <h3 class="auction-title">{{ auction.name }}</h3>
               <div class="price-info">
+                <span class="label">起拍价</span>
+                <span class="price">{{ auction.startPrice }}.0000 ETH</span>
+              </div>
+              <div class="price-info">
                 <span class="label">当前价格</span>
-                <span class="price">{{ auction.highestBid }} ETH</span>
+                <span class="price">{{ formatPrice(auction.highestBid) }} ETH</span>
               </div>
               <div class="time-info">
                 <span class="label">结束时间</span>
@@ -94,6 +100,7 @@ import { Search, Picture } from '@element-plus/icons-vue'
 import { useAuctionStore } from '@/stores/auction'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
+import Web3 from 'web3'
 
 interface Auction {
   id: number
@@ -189,16 +196,17 @@ const isEndingSoon = (endTime: number): boolean => {
   return timeLeft > 0 && timeLeft <= 24 * 3600 // 24小时内
 }
 
-const getStatusText = (status: number): string => {
-  switch (status) {
-    case 0:
-      return '拍卖中'
-    case 1:
-      return '已售出'
-    case 2:
-      return '流拍'
-    default:
-      return '未知'
+const getStatusTag = (auction: any) => {
+  const now = Math.floor(Date.now() / 1000)
+  
+  if (auction.status === 1) {
+    return { type: 'warning', text: '已售出' }
+  } else if (auction.status === 2) {
+    return { type: 'danger', text: '流拍' }
+  } else if (now > auction.auctionEndTime) {
+    return { type: 'danger', text: '已结束' }
+  } else {
+    return { type: 'success', text: '进行中' }
   }
 }
 
@@ -211,6 +219,22 @@ watch([category, sortBy], () => {
   currentPage.value = 1
   fetchAuctions()
 })
+
+// 格式化价格
+const formatPrice = (price: string | number) => {
+  try {
+    // 如果输入是数字n（例如1n），直接返回对应的ETH值
+    if (typeof price === 'number') {
+      return price.toString() + '.0000'
+    }
+    // 否则按Wei转换为ETH
+    const ethValue = Web3.utils.fromWei(price, 'ether')
+    return Number(ethValue).toFixed(4)
+  } catch {
+    console.error('价格格式化失败:', price)
+    return '0.0000'
+  }
+}
 
 onMounted(() => {
   fetchAuctions()
@@ -359,22 +383,7 @@ onMounted(() => {
   position: absolute;
   top: 10px;
   right: 10px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  color: #fff;
-}
-
-.auction-status.active {
-  background-color: var(--success-color);
-}
-
-.auction-status.ended {
-  background-color: var(--text-secondary);
-}
-
-.auction-status.pending {
-  background-color: var(--warning-color);
+  z-index: 1;
 }
 
 .auction-info {

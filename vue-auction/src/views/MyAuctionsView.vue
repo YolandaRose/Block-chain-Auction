@@ -34,9 +34,11 @@
                 <p class="auction-description">{{ auction.descLink }}</p>
                 <div class="auction-meta">
                   <span class="auction-price">{{ auction.startPrice }} ETH</span>
-                  <span :class="['auction-status', getStatusClass(auction.status)]">
-                    {{ getStatusText(auction.status) }}
-                  </span>
+                  <div class="auction-status">
+                    <el-tag :type="getStatusTag(auction).type" size="small">
+                      {{ getStatusTag(auction).text }}
+                    </el-tag>
+                  </div>
                 </div>
               </div>
             </el-card>
@@ -73,9 +75,11 @@
                 <p class="auction-description">{{ auction.descLink }}</p>
                 <div class="auction-meta">
                   <span class="auction-price">{{ auction.highestBid }} ETH</span>
-                  <span :class="['auction-status', getStatusClass(auction.status)]">
-                    {{ getStatusText(auction.status) }}
-                  </span>
+                  <div class="auction-status">
+                    <el-tag :type="getStatusTag(auction).type" size="small">
+                      {{ getStatusTag(auction).text }}
+                    </el-tag>
+                  </div>
                 </div>
               </div>
             </el-card>
@@ -104,29 +108,17 @@ const loading = ref(false)
 const hasCreatedAuctions = computed(() => createdAuctions.value.length > 0)
 const hasParticipatedAuctions = computed(() => participatedAuctions.value.length > 0)
 
-const getStatusText = (status: number) => {
-  switch (status) {
-    case 0:
-      return '进行中'
-    case 1:
-      return '已结束'
-    case 2:
-      return '流拍'
-    default:
-      return '未知'
-  }
-}
-
-const getStatusClass = (status: number) => {
-  switch (status) {
-    case 0:
-      return 'status-open'
-    case 1:
-      return 'status-sold'
-    case 2:
-      return 'status-unsold'
-    default:
-      return ''
+const getStatusTag = (auction: any) => {
+  const now = Math.floor(Date.now() / 1000)
+  
+  if (auction.status === 1) {
+    return { type: 'warning', text: '已售出' }
+  } else if (auction.status === 2) {
+    return { type: 'danger', text: '流拍' }
+  } else if (now > auction.auctionEndTime) {
+    return { type: 'danger', text: '已结束' }
+  } else {
+    return { type: 'success', text: '进行中' }
   }
 }
 
@@ -329,24 +321,10 @@ onMounted(() => {
 }
 
 .auction-status {
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-}
-
-.status-open {
-  background-color: var(--success-color);
-  color: #fff;
-}
-
-.status-sold {
-  background-color: var(--text-secondary);
-  color: #fff;
-}
-
-.status-unsold {
-  background-color: var(--warning-color);
-  color: #fff;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
 }
 
 @media (max-width: 768px) {

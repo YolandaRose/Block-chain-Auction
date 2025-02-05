@@ -754,14 +754,29 @@ class Web3Service {
         throw new Error('名称和分类不能为空')
       }
 
+      // 验证时间戳（确保是秒级时间戳）
+      const now = Math.floor(Date.now() / 1000)
+      
+      // 验证开始时间
+      if (auctionStartTime < now) {
+        throw new Error('开始时间不能早于当前时间')
+      }
+
+      // 验证结束时间
       if (auctionEndTime <= auctionStartTime) {
         throw new Error('结束时间必须大于开始时间')
       }
 
-      // 验证时间戳（确保是秒级时间戳）
-      const now = Math.floor(Date.now() / 1000)
-      if (auctionStartTime < now) {
-        throw new Error('开始时间不能早于当前时间')
+      // 验证最短拍卖时间（1分钟）
+      const minAuctionDuration = 60 // 1分钟，以秒为单位
+      if (auctionEndTime - auctionStartTime < minAuctionDuration) {
+        throw new Error('拍卖时间至少需要1分钟')
+      }
+
+      // 验证最长拍卖时间（30天）
+      const maxAuctionDuration = 30 * 24 * 60 * 60 // 30天，以秒为单位
+      if (auctionEndTime - auctionStartTime > maxAuctionDuration) {
+        throw new Error('拍卖时间不能超过30天')
       }
 
       if (!startPrice || isNaN(Number(startPrice)) || Number(startPrice) <= 0) {

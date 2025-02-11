@@ -122,16 +122,13 @@
             <el-divider />
 
             <div class="action-section" v-if="product.status === 0">
-              <el-button type="primary" size="large" @click="showBidDialog" :disabled="canFinalizeAuction">
-                立即出价
-              </el-button>
               <el-button 
-                v-if="canFinalizeAuction"
-                type="warning" 
+                type="primary" 
                 size="large" 
-                @click="handleFinalizeAuction"
+                @click="showBidDialog"
+                :disabled="isAuctionEnded"
               >
-                结束拍卖
+                {{ isAuctionEnded ? '拍卖已结束' : '立即出价' }}
               </el-button>
             </div>
 
@@ -461,41 +458,12 @@ const loadEscrowInfo = async () => {
   }
 }
 
-// 结束拍卖
-const handleFinalizeAuction = async () => {
-  try {
-    if (!product.value) return
-
-    const account = await web3Service.connectWallet()
-    if (!account) {
-      throw new Error('请先连接钱包')
-    }
-
-    // 检查是否是最高出价者
-    if (product.value.highestBidder.toLowerCase() === account.toLowerCase()) {
-      throw new Error('最高出价者不能结束拍卖')
-    }
-
-    // 检查是否是卖家
-    if (product.value.seller.toLowerCase() === account.toLowerCase()) {
-      throw new Error('卖家不能结束拍卖')
-    }
-    
-    await ElMessageBox.confirm(
-      '确定要结束此次拍卖吗？\n注意：只有非卖家和非最高出价者的第三方可以结束拍卖。',
-      '确认操作',
-      { type: 'warning' }
-    )
-    
-    const txHash = await web3Service.finalizeAuction(product.value.id)
-    ElMessage.success(`拍卖结束成功！交易哈希: ${txHash}`)
-    await loadProduct()
-  } catch (err: any) {
-    if (err !== 'cancel') {
-      ElMessage.error(err.message || '结束拍卖失败')
-    }
-  }
-}
+// 检查拍卖是否已结束
+const isAuctionEnded = computed(() => {
+  if (!product.value) return false
+  const now = Math.floor(Date.now() / 1000)
+  return now > product.value.auctionEndTime || product.value.status !== 0
+})
 
 // 更新倒计时显示
 const updateCountdown = () => {
@@ -507,14 +475,7 @@ const updateCountdown = () => {
 
   if (timeLeft <= 0) {
     countdown.value = '拍卖已结束'
-    // 只有在状态为0（拍卖中）且未尝试过结束拍卖时才尝试
-    if (product.value.status === 0 && !hasTriedFinalize.value) {
-      hasTriedFinalize.value = true
-      autoFinalizeAuction()
-    } else {
-      // 如果状态不是0或已经尝试过，停止倒计时
-      stopCountdown()
-    }
+    stopCountdown()
     return
   }
 
@@ -524,66 +485,6 @@ const updateCountdown = () => {
   const seconds = timeLeft % 60
 
   countdown.value = `${days}天 ${hours}小时 ${minutes}分钟 ${seconds}秒`
-}
-
-// 自动结束拍卖
-const autoFinalizeAuction = async () => {
-  try {
-    if (!product.value || product.value.status !== 0) {
-      stopCountdown()
-      return
-    }
-
-    console.log('尝试自动结束拍卖...')
-    
-    // 获取当前账号
-    const account = await web3Service.connectWallet()
-    if (!account) {
-      throw new Error('未连接钱包')
-    }
-
-    // 检查是否是最高出价者或卖家
-    const isHighestBidder = product.value.highestBidder.toLowerCase() === account.toLowerCase()
-    const isSeller = product.value.seller.toLowerCase() === account.toLowerCase()
-    
-    if (isHighestBidder || isSeller) {
-      console.log('当前账号是最高出价者或卖家，等待其他账号结束拍卖...')
-      stopCountdown() // 停止倒计时，不再尝试
-      return
-    }
-
-    const txHash = await web3Service.finalizeAuction(product.value.id)
-    console.log('拍卖结束成功，交易哈希:', txHash)
-    
-    // 重新加载商品信息
-    await loadProduct()
-    
-    // 显示结果通知
-    if (product.value.highestBidder === '0x0000000000000000000000000000000000000000') {
-      ElMessage.info('拍卖已结束，无人出价，商品流拍')
-    } else {
-      ElMessage.success('拍卖已结束，已创建托管合约')
-    }
-
-    // 拍卖已结束，停止倒计时
-    stopCountdown()
-  } catch (err: any) {
-    console.error('自动结束拍卖失败:', err)
-    // 如果是因为用户身份问题（最高出价者或卖家），直接停止尝试
-    if (err.message.includes('最高出价者') || err.message.includes('卖家')) {
-      console.log('因用户身份限制无法结束拍卖，停止尝试')
-      stopCountdown()
-      return
-    }
-    // 如果是其他错误，1分钟后重试一次
-    setTimeout(() => {
-      if (product.value?.status === 0 && !hasTriedFinalize.value) {
-        autoFinalizeAuction()
-      } else {
-        stopCountdown()
-      }
-    }, 60000)
-  }
 }
 
 // 启动倒计时
@@ -640,20 +541,32 @@ const loadProduct = async (retryCount = 0) => {
       highestBidder: data.highestBidder || defaultAddress
     }
 
-    // 检查是否可以结束拍卖
-    await checkCanFinalizeAuction()
-
-    console.log('商品信息:', {
-      ...product.value,
-      sellerFormatted: formatAddress(product.value.seller),
-      highestBidderFormatted: formatAddress(product.value.highestBidder),
-      canFinalizeAuction: canFinalizeAuction.value
-    })
+    // 检查拍卖是否已结束
+    const now = Math.floor(Date.now() / 1000)
+    if (product.value.status === 0 && now > product.value.auctionEndTime) {
+      console.log('拍卖已过期，尝试结束拍卖...')
+      try {
+        const account = await web3Service.connectWallet()
+        if (account) {
+          await web3Service.finalizeAuction(product.value.id)
+          await loadProduct() // 重新加载最新状态
+        }
+      } catch (err) {
+        console.error('结束拍卖失败:', err)
+      }
+    }
 
     // 如果是已售出状态，加载托管信息
     if (product.value.status === 1) {
       await loadEscrowInfo()
     }
+
+    console.log('商品信息:', {
+      ...product.value,
+      sellerFormatted: formatAddress(product.value.seller),
+      highestBidderFormatted: formatAddress(product.value.highestBidder),
+      isEnded: isAuctionEnded.value
+    })
   } catch (err: any) {
     console.error('加载商品信息失败:', err)
     error.value = err.message || '加载失败'

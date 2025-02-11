@@ -541,21 +541,6 @@ const loadProduct = async (retryCount = 0) => {
       highestBidder: data.highestBidder || defaultAddress
     }
 
-    // 检查拍卖是否已结束
-    const now = Math.floor(Date.now() / 1000)
-    if (product.value.status === 0 && now > product.value.auctionEndTime) {
-      console.log('拍卖已过期，尝试结束拍卖...')
-      try {
-        const account = await web3Service.connectWallet()
-        if (account) {
-          await web3Service.finalizeAuction(product.value.id)
-          await loadProduct() // 重新加载最新状态
-        }
-      } catch (err) {
-        console.error('结束拍卖失败:', err)
-      }
-    }
-
     // 如果是已售出状态，加载托管信息
     if (product.value.status === 1) {
       await loadEscrowInfo()

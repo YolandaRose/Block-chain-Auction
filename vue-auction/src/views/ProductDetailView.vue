@@ -132,6 +132,17 @@
               </el-button>
             </div>
 
+            <!-- 添加揭示出价按钮 -->
+            <div class="action-section" v-if="isAuctionEnded && hasUnrevealedBids">
+              <el-button 
+                type="warning" 
+                size="large" 
+                @click="showRevealDialog"
+              >
+                揭示出价
+              </el-button>
+            </div>
+
             <!-- 托管状态显示 -->
             <div class="escrow-section" v-if="product.status === 1">
               <h3>托管状态</h3>
@@ -188,7 +199,9 @@
             v-model="bidForm.amount"
             :min="getMinBidAmount()"
             :precision="4"
-            :step="0.01"
+            :step="0.0001"
+            :controls="true"
+            controls-position="right"
           />
           <span class="unit">ETH</span>
         </el-form-item>
@@ -201,6 +214,33 @@
           </el-button>
         </span>
       </template>
+    </el-dialog>
+
+    <!-- 添加揭示出价对话框 -->
+    <el-dialog
+      v-model="revealDialogVisible"
+      title="揭示出价"
+      width="30%"
+    >
+      <div v-if="unrevealedBids.length > 0">
+        <div v-for="bid in unrevealedBids" :key="bid.timestamp" class="bid-item">
+          <div class="bid-info">
+            <span>出价金额：{{ formatPrice(bid.amount) }} ETH</span>
+            <span>出价时间：{{ new Date(bid.timestamp).toLocaleString() }}</span>
+          </div>
+          <el-button 
+            type="primary" 
+            size="small" 
+            @click="revealBid(bid)"
+            :loading="revealing === bid.timestamp"
+          >
+            揭示
+          </el-button>
+        </div>
+      </div>
+      <div v-else class="no-bids">
+        没有未揭示的出价
+      </div>
     </el-dialog>
   </div>
 </template>
@@ -227,6 +267,16 @@ const bidding = ref(false)
 const bidForm = ref({
   amount: 0
 })
+
+// 揭示出价相关状态
+const revealDialogVisible = ref(false)
+const revealing = ref<number | null>(null)
+const unrevealedBids = computed(() => {
+  if (!product.value) return []
+  const bids = JSON.parse(localStorage.getItem(`bids_${product.value.id}`) || '[]')
+  return bids.filter((bid: any) => !bid.revealed)
+})
+const hasUnrevealedBids = computed(() => unrevealedBids.value.length > 0)
 
 // 托管相关状态
 const escrowInfo = ref({
@@ -365,8 +415,8 @@ const getMinBidAmount = () => {
     return startPrice
   }
   
-  // 如果已有出价，返回当前最高价加0.01 ETH，但不能低于起拍价
-  return Math.max(startPrice, currentBid + 0.01)
+  // 如果已有出价，返回当前最高价加0.0001 ETH，但不能低于起拍价
+  return Math.max(startPrice, currentBid + 0.0001)
 }
 
 // 提交出价
@@ -384,41 +434,98 @@ const submitBid = async () => {
     }
 
     const startPrice = Number(Web3.utils.fromWei(product.value.startPrice, 'ether'))
-    const minBidAmount = getMinBidAmount()
 
     // 检查是否低于起拍价
     if (bidForm.value.amount < startPrice) {
       throw new Error(`出价不能低于起拍价 ${startPrice} ETH`)
     }
 
-    // 检查是否满足最小加价要求
-    if (bidForm.value.amount < minBidAmount) {
-      throw new Error(`出价必须大于 ${minBidAmount} ETH`)
-    }
-
-    // 将ETH转换为Wei
+    // 生成随机密钥
+    const secret = Web3.utils.randomHex(32)
+    // 将出价金额转换为Wei
     const amountInWei = Web3.utils.toWei(bidForm.value.amount.toString(), 'ether')
-    console.log('出价金额:', {
-      eth: bidForm.value.amount,
-      wei: amountInWei
-    })
+    
+    // 生成密封的出价
+    const sealedBid = await web3Service.generateSealedBid(
+      amountInWei,
+      secret
+    )
 
-    // 调用合约方法
-    const result = await web3Service.placeBid(
+    // 调用合约的bid方法
+    const bidResult = await web3Service.bid(
       Number(product.value.id),
+      sealedBid,
       amountInWei
     )
 
-    ElMessage.success('出价成功！交易哈希: ' + result)
-    bidDialogVisible.value = false
+    // 保存出价信息到本地存储，以便后续揭示
+    const bidInfo = {
+      productId: product.value.id,
+      amount: amountInWei,
+      secret: secret,
+      timestamp: Date.now(),
+      revealed: false
+    }
     
-    // 重新加载商品信息
-    await loadProduct()
+    const productBids = JSON.parse(localStorage.getItem(`bids_${product.value.id}`) || '[]')
+    productBids.push(bidInfo)
+    localStorage.setItem(`bids_${product.value.id}`, JSON.stringify(productBids))
+
+    ElMessage.success('出价成功！请等待拍卖结束后揭示出价。')
+    bidDialogVisible.value = false  // 关闭对话框
+    bidForm.value.amount = 0  // 重置表单
+    await loadProduct()  // 重新加载商品信息
   } catch (err: any) {
     console.error('出价失败:', err)
     ElMessage.error(err.message || '出价失败，请重试')
   } finally {
     bidding.value = false
+  }
+}
+
+// 添加揭示出价方法
+const revealBid = async (bidInfo: any) => {
+  try {
+    if (!product.value) {
+      throw new Error('商品信息不存在')
+    }
+
+    // 检查拍卖是否已结束
+    const now = Math.floor(Date.now() / 1000)
+    if (now <= product.value.auctionEndTime) {
+      throw new Error('拍卖尚未结束，无法揭示出价')
+    }
+
+    revealing.value = bidInfo.timestamp
+
+    await web3Service.revealBid(
+      product.value.id,
+      bidInfo.amount,
+      bidInfo.secret
+    )
+    
+    // 更新本地存储中的揭示状态
+    const productBids = JSON.parse(localStorage.getItem(`bids_${product.value.id}`) || '[]')
+    const updatedBids = productBids.map((bid: any) => {
+      if (bid.timestamp === bidInfo.timestamp) {
+        bid.revealed = true
+      }
+      return bid
+    })
+    localStorage.setItem(`bids_${product.value.id}`, JSON.stringify(updatedBids))
+    
+    ElMessage.success('揭示出价成功！')
+    await loadProduct()
+
+    // 如果没有未揭示的出价了，关闭对话框
+    if (unrevealedBids.value.length === 0) {
+      revealDialogVisible.value = false
+    }
+  } catch (err: any) {
+    console.error('揭示出价失败:', err)
+    ElMessage.error(err.message || '揭示出价失败，请重试')
+  } finally {
+    revealing.value = null
   }
 }
 
@@ -479,6 +586,26 @@ const updateCountdown = () => {
   if (timeLeft <= 0) {
     countdown.value = '拍卖已结束'
     stopCountdown()
+    
+    // 检查是否可以结束拍卖
+    checkCanFinalizeAuction().then(canFinalize => {
+      if (canFinalize && !hasTriedFinalize.value) {
+        hasTriedFinalize.value = true
+        ElMessageBox.confirm(
+          '拍卖时间已到，是否结束拍卖？',
+          '结束拍卖',
+          {
+            confirmButtonText: '结束拍卖',
+            cancelButtonText: '取消',
+            type: 'warning'
+          }
+        ).then(() => {
+          handleAuctionEnd()
+        }).catch(() => {
+          // 用户取消操作
+        })
+      }
+    })
     return
   }
 
@@ -502,6 +629,59 @@ const stopCountdown = () => {
     clearInterval(countdownTimer.value)
     countdownTimer.value = null
   }
+}
+
+// 在 script setup 部分添加新的方法
+const handleAuctionEnd = async () => {
+  try {
+    if (!product.value) return
+    
+    // 1. 检查是否有未揭示的出价
+    const bids = JSON.parse(localStorage.getItem(`bids_${product.value.id}`) || '[]')
+    const unrevealedBids = bids.filter((bid: any) => !bid.revealed)
+    
+    if (unrevealedBids.length > 0) {
+      // 自动揭示所有未揭示的出价
+      for (const bid of unrevealedBids) {
+        try {
+          await web3Service.revealBid(
+            product.value.id,
+            bid.amount,
+            bid.secret
+          )
+          ElMessage.success('出价已揭示')
+        } catch (err: any) {
+          console.error('揭示出价失败:', err)
+          ElMessage.error(`揭示出价失败: ${err.message}`)
+        }
+      }
+    }
+
+    // 2. 结束拍卖
+    const txHash = await web3Service.finalizeAuction(product.value.id)
+    ElMessage.success(`拍卖已结束! 交易哈希: ${txHash}`)
+    
+    // 3. 重新加载商品信息
+    await loadProduct()
+    
+    // 4. 如果当前用户是赢家，显示通知
+    const account = await web3Service.connectWallet()
+    if (account.toLowerCase() === product.value.highestBidder.toLowerCase()) {
+      ElMessageBox.alert(
+        `恭喜您赢得了拍卖！您需要支付 ${formatPrice(product.value.secondHighestBid)} ETH`,
+        '拍卖结果',
+        { type: 'success' }
+      )
+    }
+  } catch (err: any) {
+    console.error('结束拍卖失败:', err)
+    ElMessage.error(err.message || '结束拍卖失败')
+  }
+}
+
+// 显示揭示出价对话框
+const showRevealDialog = () => {
+  revealDialogVisible.value = true
 }
 
 // 加载商品信息

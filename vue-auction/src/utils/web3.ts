@@ -596,22 +596,44 @@ class Web3Service {
     const account = await this.connectWallet()
     
     try {
-      console.log('结束拍卖参数:', {
+      // 1. 获取当前拍卖状态
+      const product = await this.getProduct(productId)
+      if (product.status !== 0) {
+        throw new Error('拍卖已结束')
+      }
+
+      const now = Math.floor(Date.now() / 1000)
+      if (now <= product.auctionEndTime) {
+        throw new Error('拍卖尚未结束')
+      }
+
+      console.log('结束拍卖:', {
         productId,
-        account
+        account,
+        highestBidder: product.highestBidder,
+        highestBid: product.highestBid,
+        secondHighestBid: product.secondHighestBid
       })
 
-      // 估算gas
+      // 2. 估算gas
       const gas = await this.contract.methods
         .finalizeAuction(productId)
         .estimateGas({ from: account })
 
+      // 3. 发送交易
       const result = await this.contract.methods
         .finalizeAuction(productId)
         .send({ 
           from: account,
           gas: Math.floor(Number(gas) * 1.5).toString()
         })
+      
+      // 4. 等待交易确认
+      await this.web3.eth.getTransactionReceipt(result.transactionHash)
+      
+      // 5. 重新获取商品信息
+      const updatedProduct = await this.getProduct(productId)
+      console.log('拍卖结束后的商品状态:', updatedProduct)
       
       return result.transactionHash
     } catch (error: any) {
@@ -846,6 +868,30 @@ class Web3Service {
       console.error('创建商品失败:', error)
       throw new Error('创建商品失败: ' + (error as Error).message)
     }
+  }
+
+  // 生成密封出价
+  async generateSealedBid(amount: string, secret: string): Promise<string> {
+    return this.contract.methods.keccak(amount, secret).call()
+  }
+
+  // 提交密封出价
+  async bid(productId: number, sealedBid: string, value: string): Promise<string> {
+    const account = await this.connectWallet()
+    const result = await this.contract.methods.bid(productId, sealedBid).send({
+      from: account,
+      value: value
+    })
+    return result.transactionHash
+  }
+
+  // 揭示出价
+  async revealBid(productId: number, amount: string, secret: string): Promise<string> {
+    const account = await this.connectWallet()
+    const result = await this.contract.methods.revealBid(productId, amount, secret).send({
+      from: account
+    })
+    return result.transactionHash
   }
 }
 

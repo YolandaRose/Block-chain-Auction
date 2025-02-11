@@ -38,7 +38,7 @@
                 <h3 class="auction-title">{{ auction.name }}</h3>
                 <p class="auction-description">{{ auction.descLink }}</p>
                 <div class="auction-meta">
-                  <span class="auction-price">{{ auction.startPrice }} ETH</span>
+                  <span class="auction-price">{{ formatPrice(auction.startPrice) }} ETH</span>
                 </div>
               </div>
             </el-card>
@@ -79,7 +79,46 @@
                 <h3 class="auction-title">{{ auction.name }}</h3>
                 <p class="auction-description">{{ auction.descLink }}</p>
                 <div class="auction-meta">
-                  <span class="auction-price">{{ auction.highestBid }} ETH</span>
+                  <span class="auction-price">{{ formatPrice(auction.highestBid) }} ETH</span>
+                </div>
+              </div>
+            </el-card>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="我的藏品" name="collections">
+          <el-empty v-if="!hasCollections" description="暂无藏品">
+            <el-button type="primary" @click="$router.push('/auctions')">
+              浏览拍卖
+            </el-button>
+          </el-empty>
+          <div v-else class="auction-list">
+            <el-card
+              v-for="auction in collections"
+              :key="auction.id"
+              class="auction-card"
+              :body-style="{ padding: '0px' }"
+              @click="goToDetail(auction.id)"
+            >
+              <div class="auction-status">
+                <el-tag type="success" size="small">已拥有</el-tag>
+              </div>
+              <el-image
+                :src="auction.imageLink"
+                class="auction-image"
+                fit="cover"
+              >
+                <template #error>
+                  <div class="image-placeholder">
+                    <el-icon :size="24"><Picture /></el-icon>
+                  </div>
+                </template>
+              </el-image>
+              <div class="auction-info">
+                <h3 class="auction-title">{{ auction.name }}</h3>
+                <p class="auction-description">{{ auction.descLink }}</p>
+                <div class="auction-meta">
+                  <span class="auction-price">成交价: {{ formatPrice(auction.secondHighestBid) }} ETH</span>
                 </div>
               </div>
             </el-card>
@@ -97,16 +136,19 @@ import { Picture } from '@element-plus/icons-vue'
 import { web3Service } from '@/utils/web3'
 import { ElMessage } from 'element-plus'
 import type { Product } from '@/utils/web3'
+import Web3 from 'web3'
 
 const router = useRouter()
 const activeTab = ref('created')
 
 const createdAuctions = ref<Product[]>([])
 const participatedAuctions = ref<Product[]>([])
+const collections = ref<Product[]>([])
 const loading = ref(false)
 
 const hasCreatedAuctions = computed(() => createdAuctions.value.length > 0)
 const hasParticipatedAuctions = computed(() => participatedAuctions.value.length > 0)
+const hasCollections = computed(() => collections.value.length > 0)
 
 const getStatusTag = (auction: any) => {
   const now = Math.floor(Date.now() / 1000)
@@ -180,7 +222,16 @@ const loadAuctions = async (retryCount = 0) => {
       participatedIds.has(product.id)
     )
 
-    if (createdAuctions.value.length === 0 && participatedAuctions.value.length === 0 && retryCount < 2) {
+    // 过滤出用户的藏品（已结束的拍卖且用户是最高出价者）
+    collections.value = allProducts.filter(product => 
+      product.status === 1 && // 已售出
+      product.highestBidder.toLowerCase() === currentUserAddress // 用户是最高出价者
+    )
+
+    if (createdAuctions.value.length === 0 && 
+        participatedAuctions.value.length === 0 && 
+        collections.value.length === 0 && 
+        retryCount < 2) {
       console.log(`未找到任何拍卖，第${retryCount + 1}次重试...`)
       setTimeout(() => loadAuctions(retryCount + 1), 5000)
     } else if (retryCount >= 2) {
@@ -198,6 +249,17 @@ const loadAuctions = async (retryCount = 0) => {
     }
   } finally {
     loading.value = false
+  }
+}
+
+// 添加格式化价格的方法
+const formatPrice = (price: string | number) => {
+  try {
+    const ethValue = Web3.utils.fromWei(price.toString(), 'ether')
+    return Number(ethValue).toFixed(4)
+  } catch (err) {
+    console.error('价格格式化失败:', price, err)
+    return '0.0000'
   }
 }
 

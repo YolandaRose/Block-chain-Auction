@@ -59,7 +59,7 @@
               <h3 class="auction-title">{{ auction.name }}</h3>
               <div class="price-info">
                 <span class="label">起拍价</span>
-                <span class="price">{{ auction.startPrice }}.0000 ETH</span>
+                <span class="price">{{ formatPrice(auction.startPrice) }} ETH</span>
               </div>
               <div class="price-info">
                 <span class="label">当前价格</span>
@@ -223,15 +223,11 @@ watch([category, sortBy], () => {
 // 格式化价格
 const formatPrice = (price: string | number) => {
   try {
-    // 如果输入是数字n（例如1n），直接返回对应的ETH值
-    if (typeof price === 'number') {
-      return price.toString() + '.0000'
-    }
-    // 否则按Wei转换为ETH
-    const ethValue = Web3.utils.fromWei(price, 'ether')
+    // 将Wei格式的输入转换为ETH
+    const ethValue = Web3.utils.fromWei(price.toString(), 'ether')
     return Number(ethValue).toFixed(4)
-  } catch {
-    console.error('价格格式化失败:', price)
+  } catch (err) {
+    console.error('价格格式化失败:', price, err)
     return '0.0000'
   }
 }

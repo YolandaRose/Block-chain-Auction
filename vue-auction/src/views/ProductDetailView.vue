@@ -71,7 +71,7 @@
             <div class="price-info">
               <div class="price-item">
                 <div class="label">起拍价</div>
-                <div class="value">{{ product.startPrice }}.0000 ETH</div>
+                <div class="value">{{ formatPrice(product.startPrice) }} ETH</div>
               </div>
               <div class="price-item highlight">
                 <div class="label">当前最高价</div>
@@ -324,13 +324,13 @@ const formatPrice = (price: string | number) => {
   try {
     // 如果输入是数字n（例如1n），直接返回对应的ETH值
     if (typeof price === 'number') {
-      return price.toString() + '.0000'
+      return Web3.utils.fromWei(price.toString(), 'ether')
     }
     // 否则按Wei转换为ETH
     const ethValue = Web3.utils.fromWei(price, 'ether')
     return Number(ethValue).toFixed(4)
-  } catch {
-    console.error('价格格式化失败:', price)
+  } catch (err) {
+    console.error('价格格式化失败:', price, err)
     return '0.0000'
   }
 }
@@ -356,9 +356,9 @@ const showBidDialog = () => {
 const getMinBidAmount = () => {
   if (!product.value) return 0
   
-  // 获取起拍价和当前最高价
-  const startPrice = Number(product.value.startPrice) // 直接使用数字值
-  const currentBid = Number(formatPrice(product.value.highestBid))
+  // 获取起拍价和当前最高价（都是Wei格式）
+  const startPrice = Number(Web3.utils.fromWei(product.value.startPrice, 'ether'))
+  const currentBid = Number(Web3.utils.fromWei(product.value.highestBid, 'ether'))
   
   // 如果没有人出价，返回起拍价
   if (currentBid === 0) {
@@ -383,7 +383,7 @@ const submitBid = async () => {
       throw new Error('请输入有效的出价金额')
     }
 
-    const startPrice = Number(formatPrice(product.value.startPrice))
+    const startPrice = Number(Web3.utils.fromWei(product.value.startPrice, 'ether'))
     const minBidAmount = getMinBidAmount()
 
     // 检查是否低于起拍价
@@ -398,7 +398,10 @@ const submitBid = async () => {
 
     // 将ETH转换为Wei
     const amountInWei = Web3.utils.toWei(bidForm.value.amount.toString(), 'ether')
-    console.log('出价金额:', bidForm.value.amount, 'ETH (', amountInWei, 'Wei)')
+    console.log('出价金额:', {
+      eth: bidForm.value.amount,
+      wei: amountInWei
+    })
 
     // 调用合约方法
     const result = await web3Service.placeBid(

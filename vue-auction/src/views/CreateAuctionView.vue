@@ -26,9 +26,10 @@
         <el-form-item label="起拍价格" prop="startPrice">
           <el-input-number
             v-model="form.startPrice"
-            :precision="3"
-            :step="0.1"
-            :min="0"
+            :precision="4"
+            :step="0.0001"
+            :min="0.0001"
+            :controls="true"
             controls-position="right"
           >
             <template #suffix>ETH</template>
@@ -128,7 +129,7 @@ const categories = ['艺术品', '收藏品', '数字资产', '虚拟物品', '�
 const form = ref({
   name: '',
   description: '',
-  startPrice: 0.1,
+  startPrice: 0.1, // 默认0.1 ETH
   duration: 1, // 默认1小时
   category: '',
   condition: 0, // 默认全新
@@ -146,7 +147,7 @@ const rules = {
   ],
   startPrice: [
     { required: true, message: '请设置起拍价格', trigger: 'blur' },
-    { type: 'number', min: 0.001, message: '价格必须大于0.001 ETH', trigger: 'blur' }
+    { type: 'number', min: 0.0001, message: '价格必须大于0.0001 ETH', trigger: 'blur' }
   ],
   duration: [
     { required: true, message: '请选择拍卖时长', trigger: 'change' },

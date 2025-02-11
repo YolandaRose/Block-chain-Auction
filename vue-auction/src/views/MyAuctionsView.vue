@@ -18,6 +18,11 @@
               :body-style="{ padding: '0px' }"
               @click="goToDetail(auction.id)"
             >
+              <div class="auction-status">
+                <el-tag :type="getStatusTag(auction).type" size="small">
+                  {{ getStatusTag(auction).text }}
+                </el-tag>
+              </div>
               <el-image
                 :src="auction.imageLink"
                 class="auction-image"
@@ -34,11 +39,6 @@
                 <p class="auction-description">{{ auction.descLink }}</p>
                 <div class="auction-meta">
                   <span class="auction-price">{{ auction.startPrice }} ETH</span>
-                  <div class="auction-status">
-                    <el-tag :type="getStatusTag(auction).type" size="small">
-                      {{ getStatusTag(auction).text }}
-                    </el-tag>
-                  </div>
                 </div>
               </div>
             </el-card>
@@ -59,6 +59,11 @@
               :body-style="{ padding: '0px' }"
               @click="goToDetail(auction.id)"
             >
+              <div class="auction-status">
+                <el-tag :type="getStatusTag(auction).type" size="small">
+                  {{ getStatusTag(auction).text }}
+                </el-tag>
+              </div>
               <el-image
                 :src="auction.imageLink"
                 class="auction-image"
@@ -75,11 +80,6 @@
                 <p class="auction-description">{{ auction.descLink }}</p>
                 <div class="auction-meta">
                   <span class="auction-price">{{ auction.highestBid }} ETH</span>
-                  <div class="auction-status">
-                    <el-tag :type="getStatusTag(auction).type" size="small">
-                      {{ getStatusTag(auction).text }}
-                    </el-tag>
-                  </div>
                 </div>
               </div>
             </el-card>
@@ -263,11 +263,19 @@ onMounted(() => {
   transition: all 0.3s ease;
   border: 1px solid var(--border-color);
   cursor: pointer;
+  position: relative;
 }
 
 .auction-card:hover {
   transform: translateY(-5px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.auction-status {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
 }
 
 .auction-image {
@@ -318,13 +326,6 @@ onMounted(() => {
 .auction-price {
   color: var(--primary-color);
   font-weight: 500;
-}
-
-.auction-status {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 1;
 }
 
 @media (max-width: 768px) {

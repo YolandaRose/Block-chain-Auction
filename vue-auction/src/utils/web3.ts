@@ -339,7 +339,7 @@ class Web3Service {
     }
   }
 
-  async revealBid(productId: number, amount: string, secret: string): Promise<string> {
+  async revealBid(productId: number, amount: string, sealedBid: string): Promise<string> {
     await this.ensureInitialized()
 
     if (!this.web3 || !this.contract) {
@@ -347,58 +347,110 @@ class Web3Service {
     }
 
     const account = await this.connectWallet()
+    console.log('步骤1 - 当前账户:', account)
     
     try {
-      // 获取当前最高价信息
-      const currentBidInfo = await this.contract.methods.highestBidderInfo(productId).call() as BidderInfo
-      console.log('揭示出价前的价格信息:', {
-        currentHighestBidder: currentBidInfo[0],
-        currentHighestBid: this.web3.utils.fromWei(currentBidInfo[1], 'ether'),
-        currentSecondHighestBid: this.web3.utils.fromWei(currentBidInfo[2], 'ether'),
-        revealingBid: amount
-      })
-
-      console.log('揭示出价参数:', {
-        productId,
-        amount,
-        secret
-      })
-
-      // 估算gas
-      const gas = await this.contract.methods
-        .revealBid(productId, amount, secret)
-        .estimateGas({ from: account })
-
-      const result = await this.contract.methods
-        .revealBid(productId, amount, secret)
-        .send({ 
-          from: account,
-          gas: Math.floor(Number(gas) * 1.5).toString()
-        })
-      
-      // 获取更新后的最高价信息
-      const updatedBidInfo = await this.contract.methods.highestBidderInfo(productId).call() as BidderInfo
-      console.log('揭示出价后的价格信息:', {
-        newHighestBidder: updatedBidInfo[0],
-        newHighestBid: this.web3.utils.fromWei(updatedBidInfo[1], 'ether'),
-        newSecondHighestBid: this.web3.utils.fromWei(updatedBidInfo[2], 'ether')
-      })
-      
-      // 更新本地存储中的揭示状态
+      // 检查是否是有效的出价
+      console.log('步骤2 - 开始检查本地存储的出价记录')
       const bids = JSON.parse(localStorage.getItem(`bids_${productId}`) || '[]')
-      const updatedBids = bids.map((bid: any) => {
-        if (bid.amount === amount && bid.secret === secret) {
-          bid.revealed = true
-          bid.revealedAt = Date.now()
-        }
-        return bid
-      })
-      localStorage.setItem(`bids_${productId}`, JSON.stringify(updatedBids))
+      console.log('步骤2.1 - 本地存储的所有出价:', bids)
       
-      return result.transactionHash
+      console.log('步骤2.2 - 查找匹配的出价，参数:', {
+        amount,
+        sealedBid,
+        productId
+      })
+      
+      const bid = bids.find((b: any) => b.amount === amount && b.secret === sealedBid)
+      console.log('步骤2.3 - 找到的出价记录:', bid)
+      
+      if (!bid) {
+        throw new Error('未找到对应的出价记录')
+      }
+      
+      if (bid.revealed) {
+        throw new Error('该出价已经揭示过')
+      }
+
+      // 检查拍卖是否已结束
+      const product = await this.getProduct(productId)
+      const now = Math.floor(Date.now() / 1000)
+      if (now <= product.auctionEndTime) {
+        throw new Error('拍卖尚未结束，无法揭示出价')
+      }
+
+      // 确保金额是字符串格式
+      const amountStr = amount.toString()
+
+      console.log('步骤3 - 验证参数')
+      console.log('步骤3.1 - 原始投标参数:', {
+        productId,
+        amount: bid.amount,
+        sealedBid: bid.secret,
+        timestamp: new Date(bid.timestamp).toLocaleString()
+      })
+
+      try {
+        console.log('步骤4 - 开始估算gas')
+        const gas = await this.contract.methods
+          .revealBid(productId, amountStr, sealedBid)
+          .estimateGas({ 
+            from: account,
+            gas: '1000000'
+          })
+        console.log('步骤4.1 - gas估算成功:', gas)
+
+        console.log('步骤5 - 开始发送交易')
+        const result = await this.contract.methods
+          .revealBid(productId, amountStr, sealedBid)
+          .send({ 
+            from: account,
+            gas: Math.floor(Number(gas) * 1.5).toString()
+          })
+        console.log('步骤5.1 - 交易发送成功:', result)
+
+        console.log('步骤6 - 开始更新本地存储')
+        const updatedBids = bids.map((b: any) => {
+          if (b.amount === amount && b.secret === sealedBid) {
+            b.revealed = true
+            b.revealedAt = Date.now()
+          }
+          return b
+        })
+        localStorage.setItem(`bids_${productId}`, JSON.stringify(updatedBids))
+        console.log('步骤6.1 - 本地存储更新成功')
+        
+        return result.transactionHash
+      } catch (contractError: any) {
+        console.error('合约调用失败:', {
+          message: contractError.message,
+          code: contractError.code,
+          data: contractError.data,
+          stack: contractError.stack,
+          params: {
+            productId,
+            amount: amountStr,
+            sealedBid,
+            originalBid: bid
+          }
+        })
+        
+        if (contractError.message.includes('gas')) {
+          throw new Error('Gas估算失败，可能是参数格式不正确')
+        }
+        if (contractError.message.includes('revert')) {
+          throw new Error('合约执行被回滚，请检查：1. 拍卖是否已结束 2. 出价金额和密钥是否与投标时一致 3. 是否已经揭示过')
+        }
+        throw new Error(`合约调用失败: ${contractError.message}`)
+      }
     } catch (error: any) {
-      console.error('揭示出价失败:', error)
-      throw new Error(error.message || '揭示出价失败')
+      console.error('揭示出价失败，详细错误:', {
+        message: error.message,
+        code: error.code,
+        data: error.data,
+        stack: error.stack
+      })
+      throw new Error(`揭示出价失败: ${error.message}`)
     }
   }
 
@@ -872,26 +924,75 @@ class Web3Service {
 
   // 生成密封出价
   async generateSealedBid(amount: string, secret: string): Promise<string> {
-    return this.contract.methods.keccak(amount, secret).call()
+    if (!this.contract) {
+      throw new Error('合约未初始化')
+    }
+    // 确保使用合约的 keccak 函数
+    return this.contract.methods.keccak(amount.toString(), secret).call()
+  }
+
+  // 检查是否已经出价
+  async hasBidded(productId: number, account: string): Promise<boolean> {
+    if (!this.contract) {
+      throw new Error('合约未初始化')
+    }
+
+    try {
+      // 从本地存储检查
+      const bids = JSON.parse(localStorage.getItem(`bids_${productId}`) || '[]')
+      const hasBidInLocal = bids.some((bid: any) => bid.bidder?.toLowerCase() === account.toLowerCase())
+      
+      if (hasBidInLocal) {
+        return true
+      }
+
+      return false
+    } catch (error) {
+      console.error('检查出价记录失败:', error)
+      return false
+    }
   }
 
   // 提交密封出价
   async bid(productId: number, sealedBid: string, value: string): Promise<string> {
     const account = await this.connectWallet()
+    
+    // 检查是否已经出价
+    const hasBidded = await this.hasBidded(productId, account)
+    if (hasBidded) {
+      throw new Error('您已经对此商品出价过了，不能重复出价')
+    }
+
+    console.log('提交出价:', {
+      productId,
+      sealedBid,
+      value,
+      valueInEth: this.web3?.utils.fromWei(value, 'ether')
+    })
+    
     const result = await this.contract.methods.bid(productId, sealedBid).send({
       from: account,
       value: value
     })
+
+    // 保存完整的出价信息到本地存储
+    const bidInfo = {
+      productId,
+      amount: value,
+      secret: sealedBid,  // 存储完整的sealedBid而不是secret
+      revealed: false,
+      timestamp: Date.now()
+    }
+    const bids = JSON.parse(localStorage.getItem(`bids_${productId}`) || '[]')
+    bids.push(bidInfo)
+    localStorage.setItem(`bids_${productId}`, JSON.stringify(bids))
+    
     return result.transactionHash
   }
 
-  // 揭示出价
-  async revealBid(productId: number, amount: string, secret: string): Promise<string> {
-    const account = await this.connectWallet()
-    const result = await this.contract.methods.revealBid(productId, amount, secret).send({
-      from: account
-    })
-    return result.transactionHash
+  // 获取当前账户
+  getCurrentAccount(): string {
+    return this.account
   }
 }
 

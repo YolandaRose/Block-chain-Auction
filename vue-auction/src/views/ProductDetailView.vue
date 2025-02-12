@@ -71,11 +71,11 @@
             <div class="price-info">
               <div class="price-item">
                 <div class="label">起拍价</div>
-                <div class="value">{{ formatPrice(product.startPrice) }} ETH</div>
+                <div class="value">{{ formatBidAmount(product.startPrice) }} ETH</div>
               </div>
               <div class="price-item highlight">
                 <div class="label">当前最高价</div>
-                <div class="value">{{ formatPrice(product.highestBid) }} ETH</div>
+                <div class="value">{{ formatBidAmount(product.highestBid) }} ETH</div>
               </div>
             </div>
 
@@ -126,9 +126,9 @@
                 type="primary" 
                 size="large" 
                 @click="showBidDialog"
-                :disabled="isAuctionEnded"
+                :disabled="isAuctionEnded || !canBid || bidding"
               >
-                {{ isAuctionEnded ? '拍卖已结束' : '立即出价' }}
+                {{ getBidButtonText() }}
               </el-button>
             </div>
 
@@ -225,7 +225,7 @@
       <div v-if="unrevealedBids.length > 0">
         <div v-for="bid in unrevealedBids" :key="bid.timestamp" class="bid-item">
           <div class="bid-info">
-            <span>出价金额：{{ formatPrice(bid.amount) }} ETH</span>
+            <span>出价金额：{{ formatBidAmount(bid.amount) }} ETH</span>
             <span>出价时间：{{ new Date(bid.timestamp).toLocaleString() }}</span>
           </div>
           <el-button 
@@ -233,6 +233,7 @@
             size="small" 
             @click="revealBid(bid)"
             :loading="revealing === bid.timestamp"
+            :disabled="!canRevealBid(bid)"
           >
             揭示
           </el-button>
@@ -292,6 +293,9 @@ const countdownTimer = ref<number | null>(null)
 // 添加标记，记录是否已尝试结束拍卖
 const hasTriedFinalize = ref(false)
 
+// 添加重复出价检查
+const canBid = ref(true)
+
 // 检查是否即将结束（24小时内）
 const isEndingSoon = (endTime: number): boolean => {
   const now = Math.floor(Date.now() / 1000)
@@ -311,14 +315,14 @@ const countdownClass = computed(() => {
 const checkCanFinalizeAuction = async () => {
   if (!product.value) {
     canFinalizeAuction.value = false
-    return
+    return false
   }
   
   try {
     const account = await web3Service.connectWallet()
     if (!account) {
       canFinalizeAuction.value = false
-      return
+      return false
     }
 
     const now = Math.floor(Date.now() / 1000)
@@ -327,10 +331,13 @@ const checkCanFinalizeAuction = async () => {
     const isNotHighestBidder = product.value.highestBidder.toLowerCase() !== account.toLowerCase()
     const isNotSeller = product.value.seller.toLowerCase() !== account.toLowerCase()
 
-    canFinalizeAuction.value = isTimeUp && isOpen && isNotHighestBidder && isNotSeller
+    const result = isTimeUp && isOpen && isNotHighestBidder && isNotSeller
+    canFinalizeAuction.value = result
+    return result
   } catch (err) {
     console.error('检查拍卖状态失败:', err)
     canFinalizeAuction.value = false
+    return false
   }
 }
 
@@ -372,12 +379,17 @@ const getConditionText = (condition: number) => {
 // 格式化价格
 const formatPrice = (price: string | number) => {
   try {
-    // 如果输入是数字n（例如1n），直接返回对应的ETH值
+    // 如果输入是数字，直接转换为字符串
     if (typeof price === 'number') {
-      return Web3.utils.fromWei(price.toString(), 'ether')
+      return price.toFixed(4)
     }
-    // 否则按Wei转换为ETH
-    const ethValue = Web3.utils.fromWei(price, 'ether')
+    // 如果输入是字符串，尝试转换为数字
+    const numPrice = Number(price)
+    if (!isNaN(numPrice)) {
+      return numPrice.toFixed(4)
+    }
+    // 如果是Wei格式的字符串，尝试转换为ETH
+    const ethValue = Web3.utils.fromWei(price.toString(), 'ether')
     return Number(ethValue).toFixed(4)
   } catch (err) {
     console.error('价格格式化失败:', price, err)
@@ -396,8 +408,40 @@ const formatTime = (timestamp: number) => {
   return new Date(timestamp * 1000).toLocaleString()
 }
 
-// 显示竞拍对话框
-const showBidDialog = () => {
+// 检查是否可以出价
+const checkCanBid = async () => {
+  if (!product.value) {
+    canBid.value = false
+    return false
+  }
+  
+  try {
+    const account = await web3Service.connectWallet()
+    if (!account) {
+      canBid.value = false
+      return false
+    }
+
+    // 检查是否已经出价过
+    const hasBidded = await web3Service.hasBidded(product.value.id, account)
+    canBid.value = !hasBidded
+    
+    return !hasBidded
+  } catch (error) {
+    console.error('检查出价状态失败:', error)
+    canBid.value = false
+    return false
+  }
+}
+
+// 修改 showBidDialog 函数
+const showBidDialog = async () => {
+  const canMakeBid = await checkCanBid()
+  if (!canMakeBid) {
+    ElMessage.warning('您已经对此商品出价过了，不能重复出价')
+    return
+  }
+  
   bidForm.value.amount = getMinBidAmount()
   bidDialogVisible.value = true
 }
@@ -474,6 +518,7 @@ const submitBid = async () => {
     ElMessage.success('出价成功！请等待拍卖结束后揭示出价。')
     bidDialogVisible.value = false  // 关闭对话框
     bidForm.value.amount = 0  // 重置表单
+    canBid.value = false  // 设置不能再次出价
     await loadProduct()  // 重新加载商品信息
   } catch (err: any) {
     console.error('出价失败:', err)
@@ -490,6 +535,12 @@ const revealBid = async (bidInfo: any) => {
       throw new Error('商品信息不存在')
     }
 
+    // 检查是否是当前用户的出价
+    const account = await web3Service.connectWallet()
+    if (!account) {
+      throw new Error('请先连接钱包')
+    }
+
     // 检查拍卖是否已结束
     const now = Math.floor(Date.now() / 1000)
     if (now <= product.value.auctionEndTime) {
@@ -498,9 +549,15 @@ const revealBid = async (bidInfo: any) => {
 
     revealing.value = bidInfo.timestamp
 
+    console.log('开始揭示出价，参数:', {
+      productId: product.value.id,
+      amount: bidInfo.amount,
+      secret: bidInfo.secret
+    })
+
     await web3Service.revealBid(
       product.value.id,
-      bidInfo.amount,
+      bidInfo.amount.toString(),  // 确保是字符串
       bidInfo.secret
     )
     
@@ -576,7 +633,7 @@ const isAuctionEnded = computed(() => {
 })
 
 // 更新倒计时显示
-const updateCountdown = () => {
+const updateCountdown = async () => {
   if (!product.value) return
   
   const now = Math.floor(Date.now() / 1000)
@@ -587,25 +644,29 @@ const updateCountdown = () => {
     countdown.value = '拍卖已结束'
     stopCountdown()
     
-    // 检查是否可以结束拍卖
-    checkCanFinalizeAuction().then(canFinalize => {
+    try {
+      const canFinalize = await checkCanFinalizeAuction()
       if (canFinalize && !hasTriedFinalize.value) {
         hasTriedFinalize.value = true
-        ElMessageBox.confirm(
-          '拍卖时间已到，是否结束拍卖？',
-          '结束拍卖',
-          {
-            confirmButtonText: '结束拍卖',
-            cancelButtonText: '取消',
-            type: 'warning'
-          }
-        ).then(() => {
-          handleAuctionEnd()
-        }).catch(() => {
-          // 用户取消操作
-        })
+        try {
+          await ElMessageBox.confirm(
+            '拍卖时间已到，是否结束拍卖？',
+            '结束拍卖',
+            {
+              confirmButtonText: '结束拍卖',
+              cancelButtonText: '取消',
+              type: 'warning'
+            }
+          )
+          await handleAuctionEnd()
+        } catch (err) {
+          // 用户取消操作或发生错误
+          console.log('用户取消结束拍卖或发生错误:', err)
+        }
       }
-    })
+    } catch (err) {
+      console.error('检查拍卖状态失败:', err)
+    }
     return
   }
 
@@ -752,11 +813,53 @@ const loadProduct = async (retryCount = 0) => {
 onMounted(() => {
   loadProduct()
   startCountdown()
+  checkCanBid()
 })
 
 onUnmounted(() => {
   stopCountdown()
 })
+
+// 在 script setup 部分添加
+const canRevealBid = (bid: any) => {
+  if (!product.value) return false
+  
+  // 检查是否是当前用户的出价
+  const account = web3Service.getCurrentAccount().toLowerCase()
+  const now = Math.floor(Date.now() / 1000)
+  
+  // 检查拍卖是否已结束
+  if (now <= product.value.auctionEndTime) {
+    return false
+  }
+  
+  return true
+}
+
+// 在 script setup 部分添加
+const formatBidAmount = (amount: string) => {
+  try {
+    if (!amount) return '0.0000'
+    return Web3.utils.fromWei(amount, 'ether')
+  } catch (err) {
+    console.error('格式化出价金额失败:', err)
+    return '0.0000'
+  }
+}
+
+// 添加 getBidButtonText 方法
+const getBidButtonText = () => {
+  if (isAuctionEnded.value) {
+    return '拍卖已结束'
+  }
+  if (bidding.value) {
+    return '出价中...'
+  }
+  if (!canBid.value) {
+    return '您已出价'
+  }
+  return '立即出价'
+}
 </script>
 
 <style scoped>

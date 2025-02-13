@@ -260,7 +260,6 @@ const route = useRoute()
 const product = ref<Product | null>(null)
 const loading = ref(true)
 const error = ref('')
-const canFinalizeAuction = ref(false)
 
 // 竞拍相关状态
 const bidDialogVisible = ref(false)
@@ -290,9 +289,6 @@ const escrowInfo = ref({
 const countdown = ref('')
 const countdownTimer = ref<number | null>(null)
 
-// 添加标记，记录是否已尝试结束拍卖
-const hasTriedFinalize = ref(false)
-
 // 添加重复出价检查
 const canBid = ref(true)
 
@@ -310,36 +306,6 @@ const countdownClass = computed(() => {
     'ending-soon': isEndingSoon(product.value.auctionEndTime)
   }
 })
-
-// 检查拍卖是否可以结束
-const checkCanFinalizeAuction = async () => {
-  if (!product.value) {
-    canFinalizeAuction.value = false
-    return false
-  }
-  
-  try {
-    const account = await web3Service.connectWallet()
-    if (!account) {
-      canFinalizeAuction.value = false
-      return false
-    }
-
-    const now = Math.floor(Date.now() / 1000)
-    const isTimeUp = now > product.value.auctionEndTime
-    const isOpen = product.value.status === 0
-    const isNotHighestBidder = product.value.highestBidder.toLowerCase() !== account.toLowerCase()
-    const isNotSeller = product.value.seller.toLowerCase() !== account.toLowerCase()
-
-    const result = isTimeUp && isOpen && isNotHighestBidder && isNotSeller
-    canFinalizeAuction.value = result
-    return result
-  } catch (err) {
-    console.error('检查拍卖状态失败:', err)
-    canFinalizeAuction.value = false
-    return false
-  }
-}
 
 // 获取状态样式
 const getStatusType = (status: number) => {
@@ -643,30 +609,6 @@ const updateCountdown = async () => {
   if (timeLeft <= 0) {
     countdown.value = '拍卖已结束'
     stopCountdown()
-    
-    try {
-      const canFinalize = await checkCanFinalizeAuction()
-      if (canFinalize && !hasTriedFinalize.value) {
-        hasTriedFinalize.value = true
-        try {
-          await ElMessageBox.confirm(
-            '拍卖时间已到，是否结束拍卖？',
-            '结束拍卖',
-            {
-              confirmButtonText: '结束拍卖',
-              cancelButtonText: '取消',
-              type: 'warning'
-            }
-          )
-          await handleAuctionEnd()
-        } catch (err) {
-          // 用户取消操作或发生错误
-          console.log('用户取消结束拍卖或发生错误:', err)
-        }
-      }
-    } catch (err) {
-      console.error('检查拍卖状态失败:', err)
-    }
     return
   }
 
@@ -692,55 +634,18 @@ const stopCountdown = () => {
   }
 }
 
+// 在组件挂载时启动倒计时，卸载时清除
+onMounted(() => {
+  loadProduct()
+  startCountdown()
+  checkCanBid()
+})
+
+onUnmounted(() => {
+  stopCountdown()
+})
+
 // 在 script setup 部分添加新的方法
-const handleAuctionEnd = async () => {
-  try {
-    if (!product.value) return
-    
-    // 1. 检查是否有未揭示的出价
-    const bids = JSON.parse(localStorage.getItem(`bids_${product.value.id}`) || '[]')
-    const unrevealedBids = bids.filter((bid: any) => !bid.revealed)
-    
-    if (unrevealedBids.length > 0) {
-      // 自动揭示所有未揭示的出价
-      for (const bid of unrevealedBids) {
-        try {
-          await web3Service.revealBid(
-            product.value.id,
-            bid.amount,
-            bid.secret
-          )
-          ElMessage.success('出价已揭示')
-        } catch (err: any) {
-          console.error('揭示出价失败:', err)
-          ElMessage.error(`揭示出价失败: ${err.message}`)
-        }
-      }
-    }
-
-    // 2. 结束拍卖
-    const txHash = await web3Service.finalizeAuction(product.value.id)
-    ElMessage.success(`拍卖已结束! 交易哈希: ${txHash}`)
-    
-    // 3. 重新加载商品信息
-    await loadProduct()
-    
-    // 4. 如果当前用户是赢家，显示通知
-    const account = await web3Service.connectWallet()
-    if (account.toLowerCase() === product.value.highestBidder.toLowerCase()) {
-      ElMessageBox.alert(
-        `恭喜您赢得了拍卖！您需要支付 ${formatPrice(product.value.secondHighestBid)} ETH`,
-        '拍卖结果',
-        { type: 'success' }
-      )
-    }
-  } catch (err: any) {
-    console.error('结束拍卖失败:', err)
-    ElMessage.error(err.message || '结束拍卖失败')
-  }
-}
-
-// 显示揭示出价对话框
 const showRevealDialog = () => {
   revealDialogVisible.value = true
 }
@@ -808,17 +713,6 @@ const loadProduct = async (retryCount = 0) => {
     loading.value = false
   }
 }
-
-// 在组件挂载时启动倒计时，卸载时清除
-onMounted(() => {
-  loadProduct()
-  startCountdown()
-  checkCanBid()
-})
-
-onUnmounted(() => {
-  stopCountdown()
-})
 
 // 在 script setup 部分添加
 const canRevealBid = (bid: any) => {

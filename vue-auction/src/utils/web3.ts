@@ -381,6 +381,9 @@ class Web3Service {
 
       // 确保金额是字符串格式
       const amountStr = amount.toString()
+      
+      // 移除密钥中的0x前缀
+      const secretStr = sealedBid.startsWith('0x') ? sealedBid.slice(2) : sealedBid
 
       console.log('步骤3 - 验证参数')
       console.log('步骤3.1 - 原始投标参数:', {
@@ -389,11 +392,16 @@ class Web3Service {
         sealedBid: bid.secret,
         timestamp: new Date(bid.timestamp).toLocaleString()
       })
+      console.log('步骤3.2 - 处理后的参数:', {
+        productId,
+        amount: amountStr,
+        secret: secretStr
+      })
 
       try {
         console.log('步骤4 - 开始估算gas')
         const gas = await this.contract.methods
-          .revealBid(productId, amountStr, sealedBid)
+          .revealBid(productId, amountStr, secretStr)
           .estimateGas({ 
             from: account,
             gas: '1000000'
@@ -402,7 +410,7 @@ class Web3Service {
 
         console.log('步骤5 - 开始发送交易')
         const result = await this.contract.methods
-          .revealBid(productId, amountStr, sealedBid)
+          .revealBid(productId, amountStr, secretStr)
           .send({ 
             from: account,
             gas: Math.floor(Number(gas) * 1.5).toString()
@@ -430,7 +438,7 @@ class Web3Service {
           params: {
             productId,
             amount: amountStr,
-            sealedBid,
+            secret: secretStr,
             originalBid: bid
           }
         })
